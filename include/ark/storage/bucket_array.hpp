@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ark/types.hpp"
-#include "ark/third_party/skarupke/bytell_hash_map.hpp"
+#include "ark/prelude.hpp"
+#include "ark/flat_hash_map.hpp"
 
 #include <assert.h>
 #include <array>
@@ -22,7 +22,7 @@ class Bucket {
     static constexpr uint16_t NO_OPEN_SLOT = 65535;
 
     std::array<bool, N> m_occupied;
-    std::unique_ptr<T[]> m_data;
+    std::unique_ptr<T[]> m_data; //TODO: use char[] to avoid initializing the components
     size_t m_num_active_slots;
     uint16_t m_next_open_slot;
 
@@ -53,11 +53,12 @@ public:
     uint16_t insert(Args&&... args) {
         assert(!is_full() && "Attempted to insert item into a full bucket.");
         const uint16_t new_slot = m_next_open_slot;
-        new ( &(m_occupied[new_slot]) ) T(std::forward<Args>(args)...);
+        new ( &(m_data[new_slot]) ) T(std::forward<Args>(args)...);
         m_occupied[new_slot] = true;
         m_num_active_slots++;
 
         if (is_full()) {
+            // std::cout << "filled up a bucket!" << std::endl;
             m_next_open_slot = NO_OPEN_SLOT;
         } else {
             assert(m_next_open_slot < N-1);
@@ -124,7 +125,7 @@ public:
         }
 
         // If we reach here, we couldn't find an empty slot in the old buckets, so make a new one.
-        m_buckets.emplace_back();
+        m_buckets.emplace_back(new Bucket<T,N>());
 
         return Key {
             .bucket = m_buckets.size() - 1,
@@ -161,13 +162,15 @@ class BucketArrayStorage {
     using Key = typename storage::BucketArray<T,N>::Key;
 
     storage::BucketArray<T,N> m_array;
-    mutable ska::bytell_hash_map<EntityID, Key> m_keys;
+    EntityMap<Key> m_keys;
 
 public:
     using ComponentType = T;
 
     inline T& get(EntityID id) {
-        return m_array[m_keys[id]];
+        const auto key = m_keys[id];
+        T& data = m_array[key];
+        return data;
     }
 
     inline const T& get(EntityID id) const {
@@ -175,29 +178,30 @@ public:
     }
 
     T* get_if(EntityID id) {
-        auto it = m_keys.find(id);
-        if (it == m_keys.end()) {
-            return nullptr;
+        Key* key = m_keys.lookup(id);
+        if (key) {
+            return std::addressof(m_array[*key]);
         } else {
-            return std::addressof(m_array[it->second]);
+            return nullptr;
         }
     }
 
     inline bool has(EntityID id) const {
-        return m_keys.find(id) != m_keys.end();
+        return m_keys.lookup(id) != nullptr;
     }
 
     template <typename... Args>
     T& attach(EntityID id, Args&&... args) {
         assert(!has(id) && "Attempted to attach component to entity that already posesses that component.");
         const Key new_key = m_array.insert(std::forward<Args>(args)...);
-        m_keys.insert_or_assign(id, new_key);
-        return m_array[new_key];
+        m_keys.insert(id, new_key);
+        T& data = m_array[new_key];
+        return data;
     }
 
     inline void detach(EntityID id) {
         m_array.remove(m_keys[id]);
-        m_keys.erase(id);
+        m_keys.remove(id);
     }
 };
 
