@@ -18,6 +18,7 @@ class TypeMask {
     }
 
 public:
+    //TODO: create templated set/unset/check methods
     inline constexpr void set(size_t bit) { m_bitset.set(bit); }
     inline constexpr void unset(size_t bit) { m_bitset.reset(bit); }
     inline constexpr bool check(size_t bit) { return m_bitset.test(bit); }
@@ -25,11 +26,19 @@ public:
         return (m_bitset & other.m_bitset) == m_bitset;
     }
 
+    friend bool operator==(const TypeMask<Types>& a, const TypeMask<Types>& b) {
+        return a.get_bitset() == b.get_bitset();
+    }
+
     constexpr TypeMask(void) : m_bitset() {}
 
     template <typename... Ts>
     constexpr TypeMask(const TypeList<Ts...>&) : TypeMask() {
         (set(index<Ts>()), ...);
+    }
+
+    inline const Bitset2::bitset2<Types::size>& get_bitset(void) const {
+        return m_bitset;
     }
 };
 
@@ -40,5 +49,16 @@ struct EntitySpec {
     TypeMask<AllComponents> mask;
 };
 
-}
+} // end namespace ark
+
+namespace std {
+
+template <typename Types>
+struct hash<ark::TypeMask<Types>> {
+    inline size_t operator()(const ark::TypeMask<Types>& mask) const {
+        return std::hash<Bitset2::bitset2<Types::size>>{}(mask.get_bitset());
+    }
+};
+
+} // end namespace std
 

@@ -16,6 +16,9 @@ constexpr uint32_t hash_id(EntityID id) { return id; }
 
 } // end namespace ark::detail
 
+
+// A simple open addressing hash table using robin hood hashing
+// for mapping EntityIDs to small types like storage handles.
 template <typename V>
 class EntityMap {
 
@@ -34,12 +37,13 @@ class EntityMap {
 
 public:
 
+    //BUGFIX: this breaks for large initial capacity?
     EntityMap(size_t initial_capacity)
         : m_slots( (Entry*) malloc(sizeof(Entry) * initial_capacity) )
         , m_count(0)
         , m_capacity(initial_capacity)
         , m_longest_probe(0)
-        , m_max_load_factor(0.7)
+        , m_max_load_factor(0.65)
     {
         assert(initial_capacity > 0
                && detail::is_power_of_two(initial_capacity)

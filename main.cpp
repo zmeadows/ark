@@ -1,5 +1,6 @@
 #include "ark/ark.hpp"
 #include "ark/storage/bucket_array.hpp"
+#include "ark/third_party/ThreadPool.hpp"
 
 #include <iostream>
 #include <cstdlib>
@@ -9,22 +10,17 @@ using namespace ark;
 
 struct Position {
     float x,y;
-    using Storage = BucketArrayStorage<Position, 1000>;
+    using Storage = BucketArrayStorage<Position, 65000>;
 };
 
 struct Velocity {
     float x,y;
-    using Storage = BucketArrayStorage<Velocity, 1000>;
+    using Storage = BucketArrayStorage<Velocity, 65000>;
 };
 
-class DeltaTime {
-    const float value;
-public:
-    float unwrap() const { return value; }
-    DeltaTime(float dt) : value(dt) {}
+struct DeltaTime {
+    float value;
 };
-
-using GameComponents = TypeList<Position, Velocity>;
 
 struct TestSystem {
     using Subscriptions = TypeList<Position, Velocity>;
@@ -36,19 +32,20 @@ struct TestSystem {
                                  >;
 
     static void run(SystemData data) {
-	   auto [ entities, position, velocity, delta_t ] = data;
+	   auto [ followed, position, velocity, delta_t ] = data;
 
-       const float dt = delta_t->unwrap();
+       const float dt = delta_t->value;
 
-       for (const EntityID id : entities) {
+       followed.for_each_par([&] (const EntityID id) -> void {
            Position& pos = position[id];
            const Velocity& vel = velocity[id];
            pos.x += dt * vel.x;
            pos.y += dt * vel.y;
-       }
+       });
     }
 };
 
+using GameComponents = TypeList<Position, Velocity>;
 using GameSystems    = TypeList<TestSystem>;
 using GameResources  = TypeList<DeltaTime>;
 using GameWorld      = World<GameComponents, GameSystems, GameResources>;
@@ -56,27 +53,37 @@ using GameWorld      = World<GameComponents, GameSystems, GameResources>;
 int main() {
 
     GameWorld* world = GameWorld::init([](ResourceStash<GameResources>& stash) {
-        stash.construct<DeltaTime>(0.016);
+        stash.construct<DeltaTime>(DeltaTime{0.016});
     });
 
-    if (!world) { return 1; }
+    if (!world) {
+        std::cerr << "failed to generate world!" << std::endl;
+        return 1;
+    }
 
+    const size_t num_entities = 100000;
     world->build_entities([](EntityBuilder<GameComponents> builder) {
-        for (auto i = 0; i < 1000; i++) {
+        for (size_t i = 0; i < num_entities; i++) {
             builder.new_entity()
                    .attach<Position>()
                    .attach<Velocity>();
         }
     });
 
+    std::cout << "finished creating " << num_entities << " entities." << std::endl;
 
-    for (auto i = 0; i < 1e6; i++) {
+    world->tick();
+    auto start = std::chrono::high_resolution_clock::now();
+    const size_t iters = 1e4;
+    for (size_t i = 0; i < iters; i++) {
+        if (i % (iters/10) == 0) {
+            std::cout << "iteration: " << i << std::endl;
+        }
         world->tick();
     }
-    // auto start = std::chrono::high_resolution_clock::now();
-    // auto elapsed = std::chrono::high_resolution_clock::now() - start;
-    // long long mu_sec = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-    // std::cout << 1.0 / 100.0 * (double) mu_sec / 1e6 << std::endl;
+    auto elapsed = std::chrono::high_resolution_clock::now() - start;
+    long long mu_sec = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    std::cout << "time per iteration: " << (1.0 / (double) iters) * ((double) mu_sec / 1e6) << std::endl;
 
     return 0;
 }

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "ark/third_party/skarupke/bytell_hash_map.hpp"
-
 #include <assert.h>
 #include <atomic>
 #include <cstdint>
@@ -22,7 +20,7 @@ template<typename... Ts>
 struct TypeList {
     // using Self = TypeList<Ts...>;
     static constexpr size_t size{ sizeof... (Ts) };
-    constexpr TypeList() {}
+    constexpr TypeList() = default; // necessary?
 };
 
 namespace detail {

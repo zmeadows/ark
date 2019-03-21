@@ -5,16 +5,21 @@
 #include "ark/resource.hpp"
 #include "ark/flat_entity_set.hpp"
 #include "ark/flat_hash_map.hpp"
+#include "ark/third_party/ThreadPool.hpp"
 
 #include <array>
 #include <bitset>
 #include <iostream>
 #include <optional>
+#include <thread>
 #include <tuple>
 
 namespace ark {
 
-template <typename AllComponents, typename AllSystems, typename AllResources = TypeList<>>
+template < typename AllComponents
+         , typename AllSystems
+         , typename AllResources = TypeList<>
+         >
 class World {
     static_assert(detail::is_specialization<AllComponents, TypeList>::value);
     static_assert(detail::is_specialization<AllSystems, TypeList>::value);
@@ -37,9 +42,53 @@ class World {
 
     // ------------------------------------------------------------------------------------
 
+    //TODO: remove stashes
     ComponentStash<AllComponents> m_component_stash;
     ResourceStash<AllResources> m_resource_stash;
-    SystemStash<AllSystems> m_system_stash;
+
+    // ------------------------------------------------------------------------------------
+
+    std::array<bool, AllSystems::size> m_active;
+    std::array<FlatEntitySet, AllSystems::size> m_followed;
+
+    template <typename T> requires System<T>
+    inline bool is_system_active(void) { return m_active[system_index<T>()]; }
+
+    template <typename T> requires System<T>
+    inline void set_system_active(void) { m_active[system_index<T>()] = true; }
+
+    template <typename T> requires System<T>
+    inline void set_system_inactive(void) { m_active[system_index<T>()] = false; }
+
+    template <typename T> requires System<T>
+    inline void toggle_system_active(void) { m_active[system_index<T>()] = !m_active[system_index<T>()]; }
+
+    template <typename T> requires System<T>
+    inline void follow_new_entities(const std::vector<EntityID>& entities) {
+        m_followed[system_index<T>()].insert_new_entities(entities);
+    }
+
+    template <typename T> requires System<T>
+    inline void follow_entities(const std::vector<EntityID>& entities) {
+        m_followed[system_index<T>()].insert_entities(entities);
+    }
+
+    template <typename T> requires System<T>
+    inline void unfollow_entities(const std::vector<EntityID>& entities) {
+        m_followed[system_index<T>()].remove_entities(entities);
+    }
+
+    template <typename T> requires System<T>
+    inline FollowedEntities get_followed_entities(void) {
+        return FollowedEntities(std::addressof(m_followed[system_index<T>()])
+                                , &m_thread_pool);
+    }
+
+    // TODO: remove this method
+    inline FollowedEntities get_followed_entities(const size_t sys_idx) {
+        return FollowedEntities(std::addressof(m_followed[sys_idx])
+                                , &m_thread_pool);
+    }
 
     // ------------------------------------------------------------------------------------
 
@@ -59,120 +108,137 @@ class World {
     // entities.  This primarily involves letting the relevant systems follow/unfollow
     // the new/modified entity.
 
-    std::vector<EntitySpec<AllComponents>> m_new_entity_updates;
+    std::unordered_map<ComponentMask, std::vector<EntityID>> m_new_entity_roster;
 
     template <typename T> requires System<T>
-    void alert_system_new_entity_created(EntityID id, const ComponentMask& entity_mask) {
+    void alert_system_new_entities_created( const std::vector<EntityID>& new_entities
+                                          , const ComponentMask& entity_mask)
+    {
         static const ComponentMask sys_mask = system_mask<T>();
         if (sys_mask.is_subset_of(entity_mask)) {
-            m_system_stash.template follow_entity<T>(id);
+            follow_new_entities<T>(new_entities);
         }
     }
 
-    template <typename... Ts>
-    void alert_all_systems_new_entity_created( EntityID id
-                                             , const ComponentMask& entity_mask
-                                             , const TypeList<Ts...>&)
+    template <typename... SystemTypes>
+    void alert_all_systems_new_entities_created( const std::vector<EntityID>& new_entities
+                                               , const ComponentMask& entity_mask
+                                               , const TypeList<SystemTypes...>&)
     {
-        (alert_system_new_entity_created<Ts>(id, entity_mask), ...);
+        (alert_system_new_entities_created<SystemTypes>(new_entities, entity_mask), ...);
     }
 
     void post_process_newly_created_entities(void) {
-        for (const auto& spec : m_new_entity_updates) {
-            assert(!m_entity_masks.lookup(spec.id)
-                   && "Unexpected entity found to already exist during system post-process phase");
+        for (const auto& [mask, new_entities] : m_new_entity_roster) {
 
-            alert_all_systems_new_entity_created(spec.id, spec.mask, AllSystems());
-            m_entity_masks.insert(spec.id, spec.mask);
+            if (!new_entities.empty()) {
+                for (const EntityID id : new_entities) {
+                    m_entity_masks.insert(id, mask);
+                }
+
+                alert_all_systems_new_entities_created(new_entities, mask, AllSystems());
+            }
         }
-        m_new_entity_updates.clear();
+
+        for (auto& it : m_new_entity_roster) {
+            it.second.clear();
+        }
     }
 
     // ------------------------------------------------------------------------------------
 
-    std::array<FlatEntitySet, AllComponents::size> m_detach_component_updates;
+    std::array<std::vector<EntityID>, AllComponents::size> m_detach_component_updates;
 
-    template <typename ComponentType, typename SystemType>
+    template <typename SystemType, typename ComponentType>
     requires System<SystemType> && Component<ComponentType>
-    void alert_system_component_detached_from_entity(EntityID id) {
+    void alert_system_component_detached_from_entities(const std::vector<EntityID>& entities) {
         if constexpr (system_mask<SystemType>().check(component_index<ComponentType>())) {
-            m_system_stash.template unfollow_entity<SystemType>(id);
+            unfollow_entities<SystemType>(entities);
         }
     }
 
     template <typename ComponentType, typename... SystemTypes>
     requires Component<ComponentType>
-    inline void _alert_all_systems_component_detached_from_entity(EntityID id,
-                                                                  const TypeList<SystemTypes...>&)
+    inline void _alert_all_systems_component_detached_from_entities(const std::vector<EntityID>& entities,
+                                                                    const TypeList<SystemTypes...>&)
     {
-        (alert_system_component_detached_from_entity<ComponentType, SystemTypes>(id), ...);
+        (alert_system_component_detached_from_entities<ComponentType, SystemTypes>(entities), ...);
     }
 
     template <typename T> requires Component<T>
-    inline void alert_all_systems_component_detached_from_entity(EntityID id)
+    inline void alert_all_systems_component_detached_from_entities(const std::vector<EntityID>& entities)
     {
-        _alert_all_systems_component_detached_from_entity<T>(id, AllSystems());
+        _alert_all_systems_component_detached_from_entities<T>(entities, AllSystems());
     }
 
     template <typename T> requires Component<T>
-    void post_process_newly_detached_component(EntityID id) {
-        ComponentMask& entity_mask = m_entity_masks[id];
-        entity_mask.unset(component_index<T>());
-        alert_all_systems_component_detached_from_entity<T>(id);
+    void post_process_newly_detached_component(const std::vector<EntityID>& entities)
+    {
+        for (const EntityID id : entities) {
+            ComponentMask& entity_mask = m_entity_masks[id];
+            entity_mask.unset(component_index<T>());
+        }
+        alert_all_systems_component_detached_from_entities<T>(entities);
     }
 
     template <typename T> requires Component<T>
     void post_process_newly_detached_components(void) {
-        for (const EntityID id : m_detach_component_updates[component_index<T>()]) {
-            post_process_newly_detached_component<T>(id);
-        }
-        m_detach_component_updates.clear();
+        std::vector<EntityID>& updates = m_detach_component_updates[component_index<T>()];
+        post_process_newly_detached_component<T>(updates);
+        updates.clear();
     }
 
     // ------------------------------------------------------------------------------------
 
-    std::array<FlatEntitySet, AllComponents::size> m_attach_component_updates;
+    std::array<std::vector<EntityID>, AllComponents::size> m_attach_component_updates;
 
     template <typename ComponentType, typename SystemType>
     requires System<SystemType> && Component<ComponentType>
-    void alert_system_component_attached_to_entity(EntityID id) {
+    void alert_system_component_attached_to_entities(const std::vector<EntityID>& entities)
+    {
         if constexpr (system_mask<SystemType>().check(component_index<ComponentType>())) {
-            const ComponentMask& entity_mask = m_entity_masks[id];
-            if (system_mask<SystemType>().is_subset_of(entity_mask)) {
-                m_system_stash.template follow_entity<SystemType>(id);
+            std::vector<EntityID> matched;
+            matched.reserve(entities.size());
+            for (const EntityID id : entities) {
+                const ComponentMask& entity_mask = m_entity_masks[id];
+                if (system_mask<SystemType>().is_subset_of(entity_mask)) {
+                    matched.push_back(id);
+                }
             }
+            follow_entities<SystemType>(matched);
         }
     }
 
     template <typename ComponentType, typename... SystemTypes>
-    inline void _alert_all_systems_component_attached_to_entity(EntityID id, const TypeList<SystemTypes...>&) {
-        (alert_system_component_attached_to_entity<ComponentType, SystemTypes>(id), ...);
-    }
-
-    template <typename T> requires Component<T>
-    inline void alert_all_systems_component_attached_to_entity(EntityID id)
+    inline void _alert_all_systems_component_attached_to_entities(const std::vector<EntityID>& entities,
+                                                                  const TypeList<SystemTypes...>&)
     {
-        _alert_all_systems_component_attached_to_entity<T>(id, AllSystems());
+        (alert_system_component_attached_to_entities<ComponentType, SystemTypes>(entities), ...);
     }
 
     template <typename T> requires Component<T>
-    void post_process_newly_attached_component(EntityID id) {
-        ComponentMask& entity_mask = m_entity_masks[id];
-        entity_mask.set(component_index<T>());
-        alert_all_systems_component_attached_to_entity<T>(id);
+    inline void alert_all_systems_component_attached_to_entities(const std::vector<EntityID>& entities)
+    {
+        _alert_all_systems_component_attached_to_entities<T>(entities, AllSystems());
+    }
+
+    template <typename T> requires Component<T>
+    void post_process_newly_attached_component(const std::vector<EntityID>& entities) {
+        for (const EntityID id : entities) {
+            ComponentMask& entity_mask = m_entity_masks[id];
+            entity_mask.set(component_index<T>());
+        }
+        alert_all_systems_component_attached_to_entities<T>(entities);
     }
 
     template <typename T> requires Component<T>
     void post_process_newly_attached_components(void) {
-        for (const EntityID id : m_attach_component_updates[component_index<T>()]) {
-            post_process_newly_attached_component<T>(id);
-        }
-
-        m_attach_component_updates.clear();
+        std::vector<EntityID>& updates = m_attach_component_updates[component_index<T>()];
+        post_process_newly_attached_component<T>(updates);
+        updates.clear();
     }
 
     // ------------------------------------------------------------------------------------
-
 
     template <typename T>
     void post_process_system_data_member(void) {
@@ -206,7 +272,7 @@ class World {
 
     template <typename T> requires System<T>
     void run_system(void) {
-        if (m_system_stash.template is_active<T>()) {
+        if (is_system_active<T>()) {
             const auto tag = detail::type_tag<typename T::SystemData>();
             typename T::SystemData data = build_system_data(system_index<T>(), tag);
             T::run(data);
@@ -238,10 +304,10 @@ class World {
                      &m_detach_component_updates[component_index<typename T::ComponentType>()]);
 
         } else if constexpr (std::is_same<T, FollowedEntities>::value) {
-            return FollowedEntities(m_system_stash.get_followed_entities(system_index));
+            return get_followed_entities(system_index);
 
         } else if constexpr (std::is_same<T, EntityBuilder<AllComponents>>::value) {
-            return EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_updates);
+            return EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_roster);
 
         } else if constexpr (detail::is_specialization<T, ReadResource>::value) {
             return T(m_resource_stash.template get<typename T::ResourceType>());
@@ -263,7 +329,9 @@ class World {
 
     inline bool validate(void) { return m_resource_stash.validate(); }
 
-    World() = default;
+    ThreadPool m_thread_pool;
+
+    World(size_t nthreads) : m_active({true}), m_thread_pool(nthreads) {}
 
 public:
     World(const World&)             = delete;
@@ -272,10 +340,17 @@ public:
     World& operator=(World&&)       = delete;
     ~World(void)                    = default;
 
+    static constexpr size_t default_nthreads(void) {
+        const int hardware = std::thread::hardware_concurrency();
+        // don't want to max out peoples systems by default
+        return (size_t) std::max(hardware - 2, 1);
+    }
+
     template <typename Callable>
-        //TODO: return unique_ptr
-    static World* init(Callable&& resource_initializer) {
-        World* new_world = new World();
+    static World* init( Callable&& resource_initializer
+                      , size_t nthreads = default_nthreads())
+    {
+        World* new_world = new World(nthreads);
         resource_initializer(new_world->m_resource_stash);
 
         if (new_world->validate()) {
@@ -294,7 +369,7 @@ public:
 
     template <typename Callable>
     void build_entities(Callable&& f) {
-        f(EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_updates));
+        f(EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_roster));
         post_process_newly_created_entities();
     }
 
