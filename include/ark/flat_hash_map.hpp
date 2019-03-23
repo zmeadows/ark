@@ -34,8 +34,8 @@ class EntityMap {
     size_t m_capacity;
     uint8_t m_longest_probe;
     double m_max_load_factor;
-    static const EntityID EMPTY_SENTINEL = 0;
-    static const EntityID TOMBSTONE_SENTINEL = 1;
+    static const EntityID EMPTY_SENTINEL = std::numeric_limits<EntityID>::max()-34;
+    static const EntityID TOMBSTONE_SENTINEL = std::numeric_limits<EntityID>::max()-35;
 
 public:
 
