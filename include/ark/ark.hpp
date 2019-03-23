@@ -25,19 +25,22 @@ class World {
     static_assert(detail::is_specialization<AllSystems, TypeList>::value);
     static_assert(detail::is_specialization<AllResources, TypeList>::value);
 
+    // ------------------------------------------------------------------------------------
+    // Compile-time evaluated type indices for systems, components and resources
+
     template <typename T> requires System<T>
     static constexpr size_t system_index(void) {
-        return detail::index_in_type_list<T, AllSystems>();
+        return type_list::index<T, AllSystems>();
     }
 
     template <typename T> requires Component<T>
     static constexpr size_t component_index(void) {
-        return detail::index_in_type_list<T, AllComponents>();
+        return type_list::index<T, AllComponents>();
     }
 
     template <typename T>
     static constexpr size_t resource_index(void) {
-        return detail::index_in_type_list<T, AllResources>();
+        return type_list::index<T, AllResources>();
     }
 
     // ------------------------------------------------------------------------------------
@@ -46,7 +49,10 @@ class World {
     ComponentStash<AllComponents> m_component_stash;
     ResourceStash<AllResources> m_resource_stash;
 
+    size_t m_num_entities;
+
     // ------------------------------------------------------------------------------------
+    // System information
 
     std::array<bool, AllSystems::size> m_active;
     std::array<FlatEntitySet, AllSystems::size> m_followed;
@@ -65,16 +71,19 @@ class World {
 
     template <typename T> requires System<T>
     inline void follow_new_entities(const std::vector<EntityID>& entities) {
+        ARK_LOG_VERBOSE(detail::type_name<T>() << " following new entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].insert_new_entities(entities);
     }
 
     template <typename T> requires System<T>
     inline void follow_entities(const std::vector<EntityID>& entities) {
+        ARK_LOG_VERBOSE(detail::type_name<T>() << " following entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].insert_entities(entities);
     }
 
     template <typename T> requires System<T>
     inline void unfollow_entities(const std::vector<EntityID>& entities) {
+        ARK_LOG_VERBOSE(detail::type_name<T>() << " unfollowing entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].remove_entities(entities);
     }
 
@@ -94,6 +103,7 @@ class World {
 
     using ComponentMask = TypeMask<AllComponents>;
 
+    //TODO: reserve space in this map at creation
     EntityMap<ComponentMask> m_entity_masks;
 
     template <typename T> requires System<T>
@@ -101,17 +111,20 @@ class World {
         return ComponentMask(typename T::Subscriptions());
     }
 
-    // ------------------------------------------------------------------------------------
+    /* ------------------------------------------------------------------------------------
+                _   _ _                               _   _
+      ___ _ __ | |_(_) |_ _   _    ___ _ __ ___  __ _| |_(_) ___  _ __
+     / _ \ '_ \| __| | __| | | |  / __| '__/ _ \/ _` | __| |/ _ \| '_ \
+    |  __/ | | | |_| | |_| |_| | | (__| | |  __/ (_| | |_| | (_) | | | |
+     \___|_| |_|\__|_|\__|\__, |  \___|_|  \___|\__,_|\__|_|\___/|_| |_|
+                          |___/
 
-    // After each system runs, and before the next system runs, we must react to any
-    // created/removed components on pre-existing entities as well as any newly created
-    // entities.  This primarily involves letting the relevant systems follow/unfollow
-    // the new/modified entity.
+    */// ----------------------------------------------------------------------------------
 
     std::unordered_map<ComponentMask, std::vector<EntityID>> m_new_entity_roster;
 
     template <typename T> requires System<T>
-    void alert_system_new_entities_created( const std::vector<EntityID>& new_entities
+    inline void alert_system_new_entities_created( const std::vector<EntityID>& new_entities
                                           , const ComponentMask& entity_mask)
     {
         static const ComponentMask sys_mask = system_mask<T>();
@@ -121,7 +134,7 @@ class World {
     }
 
     template <typename... SystemTypes>
-    void alert_all_systems_new_entities_created( const std::vector<EntityID>& new_entities
+    inline void alert_all_systems_new_entities_created( const std::vector<EntityID>& new_entities
                                                , const ComponentMask& entity_mask
                                                , const TypeList<SystemTypes...>&)
     {
@@ -129,23 +142,113 @@ class World {
     }
 
     void post_process_newly_created_entities(void) {
-        for (const auto& [mask, new_entities] : m_new_entity_roster) {
-
+        for (auto& [mask, new_entities] : m_new_entity_roster) {
             if (!new_entities.empty()) {
                 for (const EntityID id : new_entities) {
+                    m_num_entities++;
                     m_entity_masks.insert(id, mask);
                 }
 
                 alert_all_systems_new_entities_created(new_entities, mask, AllSystems());
+                new_entities.clear();
             }
-        }
-
-        for (auto& it : m_new_entity_roster) {
-            it.second.clear();
         }
     }
 
-    // ------------------------------------------------------------------------------------
+    /* ------------------------------------------------------------------------------------
+                _   _ _               _           _                   _   _
+      ___ _ __ | |_(_) |_ _   _    __| | ___  ___| |_ _ __ _   _  ___| |_(_) ___  _ __
+     / _ \ '_ \| __| | __| | | |  / _` |/ _ \/ __| __| '__| | | |/ __| __| |/ _ \| '_ \
+    |  __/ | | | |_| | |_| |_| | | (_| |  __/\__ \ |_| |  | |_| | (__| |_| | (_) | | | |
+     \___|_| |_|\__|_|\__|\__, |  \__,_|\___||___/\__|_|   \__,_|\___|\__|_|\___/|_| |_|
+                          |___/
+    */// ----------------------------------------------------------------------------------
+
+    std::vector<EntityID> m_death_row;
+
+    template <typename T> requires System<T>
+    inline void alert_system_entities_destroyed(
+                    const std::vector<EntityID>& destroyed_entities,
+                    const ComponentMask& destroyed_mask
+                    )
+    {
+        static const ComponentMask sys_mask = system_mask<T>();
+        if (sys_mask.is_subset_of(destroyed_mask)) {
+            unfollow_entities<T>(destroyed_entities);
+        }
+    }
+
+    template <typename... SystemTypes>
+    inline void alert_all_systems_entities_destroyed(
+                    const std::vector<EntityID>& destroyed_entities,
+                    const ComponentMask& destroyed_mask,
+                    const TypeList<SystemTypes...>&
+                    )
+    {
+        (alert_system_entities_destroyed<SystemTypes>(destroyed_entities, destroyed_mask), ...);
+    }
+
+    template <typename T> requires Component<T>
+    void detach_component_if_exists(const EntityID id, const ComponentMask& mask) {
+        if (mask.check(component_index<T>())) {
+            typename T::Storage* store = m_component_stash.template get<T>();
+            store->detach(id);
+        }
+    }
+
+    template <typename... Ts>
+    void _detach_all_components(const EntityID id,
+                                const ComponentMask& mask,
+                                const TypeList<Ts...>&)
+    {
+        //TODO: Is there a way to avoid iterating over all components here?
+        (detach_component_if_exists<Ts>(id, mask), ...);
+    }
+
+    void detach_all_components(const EntityID id, const ComponentMask& mask) {
+        _detach_all_components(id, mask, AllComponents());
+    }
+
+    void post_process_destroyed_entities(void) {
+        static std::unordered_map<ComponentMask, std::vector<EntityID>> destroyed_roster;
+
+        if (m_death_row.empty()) return;
+
+        ARK_LOG_VERBOSE("destroying " << m_death_row.size() << " entities: " << entities_to_string(m_death_row));
+
+        for (const EntityID id : m_death_row) {
+            m_num_entities--;
+            const ComponentMask mask = m_entity_masks[id];
+            m_entity_masks.remove(id);
+            auto it = destroyed_roster.find(mask);
+            if (it != destroyed_roster.end()) {
+                it->second.push_back(id);
+            } else {
+                destroyed_roster.emplace(mask, std::vector<EntityID>(1, id));
+            }
+            detach_all_components(id, mask);
+        }
+
+        m_death_row.clear();
+
+        for (auto& [mask, destroyed_entities] : destroyed_roster) {
+            if (!destroyed_entities.empty()) {
+                alert_all_systems_entities_destroyed(destroyed_entities, mask, AllSystems());
+                destroyed_entities.clear();
+            }
+        }
+    }
+
+
+    /* ------------------------------------------------------------------------------------
+         _      _             _                                                        _
+      __| | ___| |_ __ _  ___| |__     ___ ___  _ __ ___  _ __   ___  _ __   ___ _ __ | |_ ___
+     / _` |/ _ \ __/ _` |/ __| '_ \   / __/ _ \| '_ ` _ \| '_ \ / _ \| '_ \ / _ \ '_ \| __/ __|
+    | (_| |  __/ || (_| | (__| | | | | (_| (_) | | | | | | |_) | (_) | | | |  __/ | | | |_\__ \
+     \__,_|\___|\__\__,_|\___|_| |_|  \___\___/|_| |_| |_| .__/ \___/|_| |_|\___|_| |_|\__|___/
+                                                         |_|
+
+    */// ----------------------------------------------------------------------------------
 
     std::array<std::vector<EntityID>, AllComponents::size> m_detach_component_updates;
 
@@ -188,7 +291,15 @@ class World {
         updates.clear();
     }
 
-    // ------------------------------------------------------------------------------------
+    /* ------------------------------------------------------------------------------------
+           _   _             _                                                        _
+      __ _| |_| |_ __ _  ___| |__     ___ ___  _ __ ___  _ __   ___  _ __   ___ _ __ | |_ ___
+     / _` | __| __/ _` |/ __| '_ \   / __/ _ \| '_ ` _ \| '_ \ / _ \| '_ \ / _ \ '_ \| __/ __|
+    | (_| | |_| || (_| | (__| | | | | (_| (_) | | | | | | |_) | (_) | | | |  __/ | | | |_\__ \
+     \__,_|\__|\__\__,_|\___|_| |_|  \___\___/|_| |_| |_| .__/ \___/|_| |_|\___|_| |_|\__|___/
+                                                        |_|
+
+    */// ----------------------------------------------------------------------------------
 
     std::array<std::vector<EntityID>, AllComponents::size> m_attach_component_updates;
 
@@ -241,16 +352,18 @@ class World {
     // ------------------------------------------------------------------------------------
 
     template <typename T>
-    void post_process_system_data_member(void) {
+    inline void post_process_system_data_member(void) {
         if constexpr (  detail::is_specialization<T, ReadComponent>::value
                      || detail::is_specialization<T, WriteComponent>::value
                      || detail::is_specialization<T, ReadResource>::value
-                     || detail::is_specialization<T, WriteResource>::value
-                     || std::is_same<T, FollowedEntities>::value) {
+                     || detail::is_specialization<T, WriteResource>::value) {
             return;
 
         } else if constexpr (std::is_same<T, EntityBuilder<AllComponents>>::value) {
             post_process_newly_created_entities();
+
+        } else if constexpr (std::is_same<T, EntityDestroyer>::value) {
+            post_process_destroyed_entities();
 
         } else if constexpr (detail::is_specialization<T, AttachComponent>::value) {
             post_process_newly_attached_components<typename T::ComponentType>();
@@ -259,36 +372,42 @@ class World {
             post_process_newly_detached_components<typename T::ComponentType>();
 
         } else {
-            static_assert(detail::unreachable<T>::value, "Invalid system data type requested!");
+            static_assert(detail::unreachable<T>::value,
+                          "interal ark error: Invalid system data type requested in post_process_system_data_member.");
         }
     }
 
     template <typename... Ts>
-    void post_process_system_data(const detail::type_tag<std::tuple<Ts...>>&) {
+    inline void post_process_system_data(const detail::type_tag<std::tuple<Ts...>>&) {
         (post_process_system_data_member<Ts>(), ...);
     }
 
     // ------------------------------------------------------------------------------------
 
     template <typename T> requires System<T>
-    void run_system(void) {
-        if (is_system_active<T>()) {
-            const auto tag = detail::type_tag<typename T::SystemData>();
-            typename T::SystemData data = build_system_data(system_index<T>(), tag);
-            T::run(data);
+    void run_system_sequential(void) {
+        const bool system_ran = run_system<T>();
+        if (system_ran) {
+            static const auto tag = detail::type_tag<typename T::SystemData>();
             post_process_system_data(tag);
         }
     }
 
-    template <typename... Ts>
-    void run_all_systems(const TypeList<Ts...>&) {
-        (run_system<Ts>(), ...);
+    template <typename T> requires System<T>
+    bool run_system(void) {
+        const bool system_active = is_system_active<T>();
+        if (system_active) {
+            static const auto tag = detail::type_tag<typename T::SystemData>();
+            typename T::SystemData data = build_system_data(tag);
+            T::run(get_followed_entities<T>(), data);
+        }
+        return system_active;
     }
 
     // ------------------------------------------------------------------------------------
 
     template <typename T>
-    auto build_system_data_member(size_t system_index) {
+    inline auto build_system_data_member(void) {
         if constexpr (detail::is_specialization<T, ReadComponent>::value) {
             return T(m_component_stash.template get<typename T::ComponentType>());
 
@@ -303,11 +422,11 @@ class World {
             return T(m_component_stash.template get<typename T::ComponentType>(),
                      &m_detach_component_updates[component_index<typename T::ComponentType>()]);
 
-        } else if constexpr (std::is_same<T, FollowedEntities>::value) {
-            return get_followed_entities(system_index);
-
         } else if constexpr (std::is_same<T, EntityBuilder<AllComponents>>::value) {
             return EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_roster);
+
+        } else if constexpr (std::is_same<T, EntityDestroyer>::value) {
+            return EntityDestroyer(&m_death_row);
 
         } else if constexpr (detail::is_specialization<T, ReadResource>::value) {
             return T(m_resource_stash.template get<typename T::ResourceType>());
@@ -321,17 +440,28 @@ class World {
     }
 
     template<typename... Ts>
-    std::tuple<Ts...> build_system_data(size_t system_index, const detail::type_tag<std::tuple<Ts...>>&) {
-        return std::make_tuple<Ts...>(build_system_data_member<Ts>(system_index)...);
+    inline std::tuple<Ts...> build_system_data(const detail::type_tag<std::tuple<Ts...>>&) {
+        return std::make_tuple<Ts...>(build_system_data_member<Ts>()...);
     }
 
     // ------------------------------------------------------------------------------------
 
-    inline bool validate(void) { return m_resource_stash.validate(); }
+    inline bool validate(void) { return m_resource_stash.all_initialized(); }
 
     ThreadPool m_thread_pool;
 
-    World(size_t nthreads) : m_active({true}), m_thread_pool(nthreads) {}
+    template <typename T> requires System<T>
+    inline void start_system_in_parallel(std::vector<std::future<void>>& results) {
+        results.emplace_back(m_thread_pool.enqueue([this] () {
+            this->run_system<T>();
+        }));
+    }
+
+    World(size_t nthreads) : m_num_entities(0), m_thread_pool(nthreads) {
+        for (bool& active : m_active) {
+            active = true;
+        }
+    }
 
 public:
     World(const World&)             = delete;
@@ -342,8 +472,14 @@ public:
 
     static constexpr size_t default_nthreads(void) {
         const int hardware = std::thread::hardware_concurrency();
-        // don't want to max out peoples systems by default
+        // don't want to max out by default
         return (size_t) std::max(hardware - 2, 1);
+    }
+
+    template <typename T>
+    void run_storage_maintenance(void) {
+        typename T::Storage* store = m_component_stash.template get<T>();
+        store->maintenance();
     }
 
     template <typename Callable>
@@ -360,7 +496,36 @@ public:
         }
     }
 
-    inline void tick(void) { run_all_systems(AllSystems()); }
+    template <typename... Ts>
+    inline void run_systems_sequential(const TypeList<Ts...>&) {
+        (run_system_sequential<Ts>(), ...);
+    }
+
+    template <typename... Ts>
+    inline void run_systems_sequential() {
+        (run_system_sequential<Ts>(), ...);
+    }
+
+
+    template <typename... Ts>
+    void run_systems_parallel() {
+        //TODO: Verify Systems can be run in parallel
+        std::vector<std::future<void>> results;
+        (start_system_in_parallel<Ts>(results), ...);
+        for(auto&& result : results) {
+            result.get();
+        }
+    }
+
+    template <typename... Ts>
+    inline void run_systems_parallel(const TypeList<Ts...>&) {
+        run_systems_parallel<Ts...>();
+    }
+
+
+    inline void run_all_systems_sequential() {
+        run_systems_sequential(AllSystems());
+    }
 
     template <typename T>
     inline T* get_resource(void) {
@@ -368,11 +533,12 @@ public:
     }
 
     template <typename Callable>
-    void build_entities(Callable&& f) {
+    inline void build_entities(Callable&& f) {
         f(EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_roster));
         post_process_newly_created_entities();
     }
 
+    inline size_t entity_count(void) const { return m_num_entities; }
 };
 
 } // end namespace ark

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ark/prelude.hpp"
+
 #include <algorithm>
 #include <vector>
 
@@ -12,7 +14,7 @@ inline constexpr bool is_power_of_two(T n) {
     return (n & (n - 1)) == 0;
 }
 
-constexpr uint32_t hash_id(EntityID id) { return id; }
+constexpr uint32_t hash_id(EntityID id) { return 2*id; }
 
 } // end namespace ark::detail
 
@@ -37,13 +39,12 @@ class EntityMap {
 
 public:
 
-    //BUGFIX: this breaks for large initial capacity?
     EntityMap(size_t initial_capacity)
         : m_slots( (Entry*) malloc(sizeof(Entry) * initial_capacity) )
         , m_count(0)
         , m_capacity(initial_capacity)
         , m_longest_probe(0)
-        , m_max_load_factor(0.65)
+        , m_max_load_factor(0.5)
     {
         assert(initial_capacity > 0
                && detail::is_power_of_two(initial_capacity)
@@ -123,6 +124,7 @@ public:
                 probed_pair.value = new_value;
                 m_count++;
                 m_longest_probe = std::max(dib, (uint64_t) m_longest_probe);
+                ARK_ASSERT(m_longest_probe < 100, "Too long probe found!");
                 return std::addressof(probed_pair.value);
             } else if (probed_pair.id == new_id) {
                 probed_pair.value = new_value;
@@ -131,6 +133,7 @@ public:
                 uint64_t probed_dib = probe_index - (detail::hash_id(probed_pair.id) & N);
                 if (probed_dib < dib) {
                     m_longest_probe = std::max(dib, (uint64_t) m_longest_probe);
+                    ARK_ASSERT(m_longest_probe < 100, "Too long probe found!");
                     std::swap(probed_pair.id, new_id);
                     std::swap(probed_pair.value, new_value);
                     dib = probed_dib;
@@ -199,7 +202,8 @@ public:
     const V& operator[](EntityID id) const
     {
         const V* result = lookup(id);
-        assert(result != nullptr && "EntityMap: Called operator[] with non-existent EntityID!");
+        ARK_ASSERT(result != nullptr,
+                   "EntityMap: Called operator[] with non-existent EntityID: " << id);
         return *result;
     }
 };

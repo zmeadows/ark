@@ -5,9 +5,70 @@
 #include <cstdint>
 #include <iostream>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 
+#include "ark/log.hpp"
+#include "ark/type_list.hpp"
+
+#ifndef NDEBUG
+#   define ARK_ASSERT(condition, message) \
+    do { \
+        if (! (condition)) { \
+            std::cerr << "Assertion `" #condition "` failed in " << __FILE__ \
+                      << " line " << __LINE__ << ": " << message << std::endl; \
+            std::terminate(); \
+        } \
+    } while (false)
+#else
+#   define ARK_ASSERT(condition, message) do { } while (false)
+#endif
+
 namespace ark {
+
+// struct Entity {
+//     using TypeID = uint32_t;
+//     using TypeGen = uint32_t;
+//
+//     TypeID id;
+//     TypeGen gen;
+//
+//     friend bool operator<(const Entity& e1, const Entity& e2)
+//     {
+//         return e1.id < e2.id;
+//     }
+//
+//     friend bool operator==(const Entity& e1, const Entity& e2) {
+//         return e1.id == e2.id && e1.gen == e2.gen;
+//     }
+// };
+//
+// class EntityGraveyard {
+//     std::set<Entity> m_graveyard;
+//     Entity::TypeID m_fresh;
+// public:
+//     inline void kill(Entity alive) {
+//         ARK_ASSERT( std::find_if(m_graveyard.begin(), m_graveyard.end(),
+//                                  [](const Entity& dead) {
+//                                      return dead.id == alive.id;
+//                                  }) == m_graveyard.end(),
+//             "Attempted to insert already dead entity into graveyard!");
+//
+//         m_graveyard.insert(alive);
+//     }
+//
+//     Entity new(void) {
+//         if (m_graveyard.size() > 0) {
+//             auto it = m_graveyard.begin();
+//             Entity e = *it;
+//             e.gen++;
+//             m_graveyard.erase(it);
+//         } else {
+//
+//         }
+//     }
+//     size_t graveyard_size(void);
+// };
 
 using EntityID = uint32_t;
 
@@ -16,16 +77,15 @@ EntityID next_entity_id(void) {
     return next_id.fetch_add(1);
 }
 
-template<typename... Ts>
-struct TypeList {
-    // using Self = TypeList<Ts...>;
-    static constexpr size_t size{ sizeof... (Ts) };
-    constexpr TypeList() = default; // necessary?
-};
+std::string entities_to_string(const std::vector<EntityID>& entities) {
+    std::stringstream ss;
+    for (auto id : entities) ss << id << " ";
+    return ss.str();
+}
 
 namespace detail {
 
-// NOTE: this doesn't seem to work properly on templated types
+// WARNING: this isn't very robust
 template <class T>
 constexpr std::string_view type_name()
 {
@@ -56,43 +116,6 @@ concept bool SameHelper = std::is_same_v<T, U>;
 
 template< class T, class U >
 concept bool Same = detail::SameHelper<T, U> && detail::SameHelper<U, T>;
-
-//TODO: move into TypeList class
-template<typename>
-constexpr std::size_t locate(std::size_t) {
-    return static_cast<std::size_t>(-1);
-}
-
-template<typename IndexedType, typename T, typename... Ts>
-constexpr std::size_t locate(std::size_t ind = 0) {
-    if (std::is_same<IndexedType, T>::value) {
-        return ind;
-    } else {
-        return locate<IndexedType, Ts...>(ind + 1);
-    }
-}
-
-template<typename Test, template<typename...> class Ref>
-struct is_specialization : std::false_type {};
-
-template<template<typename...> class Ref, typename... Args>
-struct is_specialization<Ref<Args...>, Ref>: std::true_type {};
-
-template<typename T, typename>
-struct IndexOf;
-
-template<typename T, typename... ListedTypes>
-struct IndexOf<T, TypeList<ListedTypes...>>
-  : std::integral_constant<std::size_t, locate<T, ListedTypes...>()>
-{};
-
-template <typename T, typename List>
-static constexpr size_t index_in_type_list(void) {
-    static_assert(detail::is_specialization<List, TypeList>::value);
-    constexpr size_t idx = detail::IndexOf<T, List>::value;
-    static_assert(idx < List::size);
-    return idx;
-}
 
 } // end namespace ark::detail
 } // end namespace ark

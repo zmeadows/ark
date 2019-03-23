@@ -15,6 +15,7 @@ concept bool ComponentStorage = requires(S* store, const S* const_store, EntityI
     { const_store->has(id) } -> bool;
     { store->attach(id)    } -> typename S::ComponentType&;
     { store->detach(id)    } -> void;
+    { store->maintenance() } -> void;
 };
 
 template <typename C>
@@ -58,7 +59,7 @@ public:
 
     template <typename T> requires Component<T>
     static constexpr size_t component_index(void) {
-        return detail::index_in_type_list<T, AllComponents>();
+        return type_list::index<T, AllComponents>();
     }
 
     ComponentStash(void) : m_storage({nullptr}) {

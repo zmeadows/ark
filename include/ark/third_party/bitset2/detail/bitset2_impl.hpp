@@ -267,9 +267,8 @@ public:
   bool
   test( size_t bit ) const
   {
-    return  ( bit >= N )
-            ? throw std::out_of_range( "bitset2: Testing of bit out of range" )
-            : operator[]( bit );
+      assert(bit < N && "attempted to test bit out of range of bitset2");
+      return operator[]( bit );
   }
 
   constexpr

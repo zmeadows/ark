@@ -12,13 +12,6 @@
 
 namespace ark {
 
-template <typename S>
-concept bool System = requires {
-    typename S::SystemData;
-    typename S::Subscriptions;
-} && requires(S* sys, typename S::SystemData& data) {
-    { sys->run(data) } -> void;
-};
 
 class EntityRange {
     const EntityID* start_ptr;
@@ -83,7 +76,7 @@ public:
 
         for (const EntityRange& r : ranges) {
             results.emplace_back(
-                m_thread_pool->enqueue([&r, func = f]() -> void {
+                m_thread_pool->enqueue([&r, func = std::forward<Callable>(f)]() -> void {
                 for (const EntityID id : r) {
                     func(id);
                 }
@@ -96,6 +89,14 @@ public:
     }
 
     FollowedEntities(FlatEntitySet* s, ThreadPool* p) : m_set(s), m_thread_pool(p) {}
+};
+
+template <typename S>
+concept bool System = requires {
+    typename S::SystemData;
+    typename S::Subscriptions;
+} && requires(S* sys, typename S::SystemData& data, FollowedEntities entities) {
+    { sys->run(entities, data) } -> void;
 };
 
 template <Component T>
@@ -180,6 +181,17 @@ public:
     inline const T* operator->() const { return m_ptr; }
 };
 
+class EntityDestroyer {
+    std::vector<EntityID>* m_world_death_row;
+
+public:
+    EntityDestroyer(std::vector<EntityID>* death_row)
+        : m_world_death_row(death_row) {}
+
+    inline void operator()(const EntityID id) {
+        m_world_death_row->push_back(id);
+    }
+};
 
 template <typename AllComponents>
 class EntityBuilder {
@@ -189,11 +201,6 @@ class EntityBuilder {
 
     Stash* m_world_stash;
     Roster* m_world_roster;
-
-    template <typename T> requires Component<T>
-    static constexpr size_t component_index(void) {
-        return detail::index_in_type_list<T, AllComponents>();
-    }
 
 public:
     EntityBuilder(Stash* stash, Roster* roster)
@@ -216,7 +223,7 @@ public:
         EntitySkeleton& attach(Args&&... args) {
             typename T::Storage* storage = m_world_stash->template get<T>();
             storage->attach(m_id, std::forward<Args>(args)...);
-            m_mask.set(component_index<T>());
+            m_mask.set(type_list::index<T,AllComponents>());
             return *this;
         }
 

@@ -12,19 +12,22 @@ class TypeMask {
 
     Bitset2::bitset2<Types::size> m_bitset;
 
-    template <typename T>
-    static constexpr size_t index(void) {
-        return detail::index_in_type_list<T, Types>();
-    }
-
 public:
-    //TODO: create templated set/unset/check methods
     inline constexpr void set(size_t bit) { m_bitset.set(bit); }
     inline constexpr void unset(size_t bit) { m_bitset.reset(bit); }
-    inline constexpr bool check(size_t bit) { return m_bitset.test(bit); }
+    inline constexpr bool check(size_t bit) const { return m_bitset.test(bit); }
     inline constexpr bool is_subset_of(const TypeMask<Types>& other) const {
         return (m_bitset & other.m_bitset) == m_bitset;
     }
+
+    template <typename T>
+    inline constexpr void set(void) { m_bitset.set(type_list::index<T,Types>()); }
+
+    template <typename T>
+    inline constexpr void unset(void) { m_bitset.unset(type_list::index<T,Types>()); }
+
+    template <typename T>
+    inline constexpr bool check(void) { return m_bitset.test(type_list::index<T,Types>()); }
 
     friend bool operator==(const TypeMask<Types>& a, const TypeMask<Types>& b) {
         return a.get_bitset() == b.get_bitset();
@@ -34,7 +37,7 @@ public:
 
     template <typename... Ts>
     constexpr TypeMask(const TypeList<Ts...>&) : TypeMask() {
-        (set(index<Ts>()), ...);
+        (set(type_list::index<Ts,Types>()), ...);
     }
 
     inline const Bitset2::bitset2<Types::size>& get_bitset(void) const {

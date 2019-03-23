@@ -4,9 +4,10 @@
 #include "ark/flat_hash_map.hpp"
 
 #include <array>
-#include <chrono>
 #include <assert.h>
+#include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <new>
@@ -24,27 +25,6 @@ class BucketArrayStorage;
 }
 
 namespace ark::storage {
-
-namespace detail {
-
-void insertion_sort(std::vector<EntityID>& arr)
-{
-    const int64_t N = arr.size();
-    for (int64_t i = 1; i < N; i++) {
-        const EntityID key = arr[i];
-        int64_t j = i - 1;
-
-        while (j >= 0 && arr[j] > key) {
-            arr[j + 1] = arr[j];
-            j = j - 1;
-        }
-        arr[j + 1] = key;
-    }
-}
-
-} // end namespace detail
-
-
 
 template <typename T, size_t N>
 class Bucket {
@@ -74,6 +54,9 @@ public:
     Bucket& operator=(const Bucket&) = delete;
 
     EntityID entity_at_slot(uint16_t slot) const { return m_slot_ids[slot]; }
+    void set_entity_at_slot(EntityID id, uint16_t slot) {
+        m_slot_ids[slot] = id;
+    }
 
     ~Bucket(void) {
         for (size_t i = 0; i < N; i++) {
@@ -97,6 +80,13 @@ public:
 
     inline const T& operator[](uint16_t slot) const {
         assert(m_slot_ids[slot] != NO_ENTITY && "Attempted to access inactive slot with Bucket::operator[]");
+        assert(slot < N && "Attempted to access non-existent slot with Bucket::operator[]");
+        return m_data[slot];
+    }
+
+    // same as operator[], except with no assert for empty slot
+    // primarily to be used by the maintanence method in BucketArrayStorage
+    inline T& data_at(uint16_t slot) {
         assert(slot < N && "Attempted to access non-existent slot with Bucket::operator[]");
         return m_data[slot];
     }
@@ -156,6 +146,31 @@ public:
     struct Key {
         uint16_t bucket;
         uint16_t slot;
+
+        inline friend bool operator==(const Key& k1, const Key& k2) {
+            return k1.bucket == k2.bucket && k1.slot == k2.slot;
+        }
+
+        inline friend bool operator==(const Key& k1, Key& k2) {
+            return k1.bucket == k2.bucket && k1.slot == k2.slot;
+        }
+
+        inline friend bool operator==(Key& k1, const Key& k2) {
+            return k2 == k1;
+        }
+
+        inline friend bool operator!=(const Key& k1, Key& k2) {
+            return !(k1 == k2);
+        }
+
+        inline friend bool operator!=(Key& k1, const Key& k2) {
+            return !(k2 == k1);
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const Key& key) {
+            os << "[" << key.bucket << "]{" << key.slot << "}";
+            return os;
+        }
     };
 
     BucketArray(void) {
@@ -165,6 +180,10 @@ public:
 
     Bucket<T,N>* get_ith_bucket(size_t i) { return m_buckets[i].get(); }
     size_t num_buckets(void) const { return m_buckets.size(); }
+
+    void set_entity_at_key(EntityID id, const Key& key) {
+        m_buckets[key.bucket]->set_entity_at_slot(id, key.slot);
+    }
 
     size_t num_filled_slots(void) const {
         size_t sum = 0;
@@ -202,12 +221,17 @@ public:
 
     inline T& operator[](const Key key) {
         assert(key.bucket < m_buckets.size() && "BucketArray::Key points to non-existent Bucket.");
-        return m_buckets[key.bucket]->operator[](key.slot);;
+        return m_buckets[key.bucket]->operator[](key.slot);
     }
 
     inline const T& operator[](const Key key) const {
         assert(key.bucket < m_buckets.size() && "BucketArray::Key points to non-existent Bucket.");
-        return m_buckets[key.bucket]->operator[](key.slot);;
+        return m_buckets[key.bucket]->operator[](key.slot);
+    }
+
+    inline T& data_at(const Key key) {
+        assert(key.bucket < m_buckets.size() && "BucketArray::Key points to non-existent Bucket.");
+        return m_buckets[key.bucket]->data_at(key.slot);
     }
 };
 
@@ -226,9 +250,11 @@ class BucketArrayStorage {
 public:
     using ComponentType = T;
 
-    BucketArrayStorage(void) : m_sort_buffer(N) {}
+    BucketArrayStorage(void) : m_sort_buffer() {
+        m_sort_buffer.reserve(10*N);
+    }
 
-    void defragment(void) {
+    void maintenance(void) {
         const size_t num_buckets = m_array.num_buckets();
         const size_t total_slots = num_buckets * N;
         m_sort_buffer.reserve(total_slots);
@@ -242,13 +268,18 @@ public:
             }
         }
 
-        // use insertion sort here, since the buffer should be nearly sorted already
-        storage::detail::insertion_sort(m_sort_buffer);
+        std::sort(m_sort_buffer.begin(), m_sort_buffer.end());
 
-        // re-order the bucket arrays in order of entity-ids and update EntityID-to-Key map
+        // reset bucket meta-data
         for (size_t ibucket = 0; ibucket < m_array.num_buckets(); ibucket++) {
             auto* bucket = m_array.get_ith_bucket(ibucket);
             bucket->m_num_active_slots = 0;
+            bucket->m_next_open_slot = 0;
+        }
+
+        // re-order the bucket arrays in order of entity-ids and update entity/key meta-data
+        for (size_t ibucket = 0; ibucket < m_array.num_buckets(); ibucket++) {
+            auto* bucket = m_array.get_ith_bucket(ibucket);
             bucket->m_next_open_slot = NO_OPEN_SLOT;
             for (size_t islot = 0; islot < N; islot++) {
                 const EntityID old_entity_at_slot = bucket->entity_at_slot(islot);
@@ -260,22 +291,54 @@ public:
                     bucket->m_next_open_slot = islot;
                 }
 
+                // @OPTIMIZE: I left some unecessarily slow code in here (double map lookups)
+                // to make sure it is correct.
                 if (old_entity_at_slot != new_entity_at_slot) {
-                    Key& new_key = m_keys[new_entity_at_slot];
-                    const Key old_key = Key {ibucket, islot};
-                    std::swap(m_array[old_key], m_array[new_key]);
-                    std::swap(new_key, m_keys[old_entity_at_slot]);
+                    const Key focus_key = Key {ibucket, islot};
+                    const Key new_entities_current_key = m_keys[new_entity_at_slot];
+                    const bool already_swapped = focus_key == new_entities_current_key;
+                    // if (already_swapped) {
+                    //     std::cout << "already swapped entities: " << new_entity_at_slot << " and " << old_entity_at_slot << std::endl;
+                    // }
+                    if (!already_swapped) {
+                        // const Key new_entities_old_key = m_keys[new_entity_at_slot];
+                        // std::cout << "swapping entities: " << new_entity_at_slot << " and " << old_entity_at_slot << std::endl;
+                        // std::cout << "at keys: " << new_entities_old_key << " and " << focus_key << std::endl;
+                        if (old_entity_at_slot != NO_ENTITY) {
+                            const Key old_entities_current_key = m_keys[old_entity_at_slot];
+
+                            ARK_ASSERT(old_entities_current_key == focus_key,
+                                       "inconsistency in bucket_array maintenance keys"
+                                       << old_entities_current_key << " " << focus_key);
+
+                            m_keys[new_entity_at_slot] = focus_key;
+                            m_keys[old_entity_at_slot] = new_entities_current_key;
+                            std::swap(m_array.data_at(new_entities_current_key),
+                                      m_array.data_at(old_entities_current_key));
+                            m_array.set_entity_at_key(new_entity_at_slot, focus_key);
+                            m_array.set_entity_at_key(old_entity_at_slot, new_entities_current_key);
+                        } else {
+                            m_keys[new_entity_at_slot] = focus_key;
+                            m_array.data_at(focus_key) = std::move(m_array.data_at(new_entities_current_key));
+                            m_array.set_entity_at_key(new_entity_at_slot, focus_key);
+                            m_array.set_entity_at_key(NO_ENTITY, new_entities_current_key);
+                        }
+                    }
                 }
             }
         }
     }
 
     inline T& get(EntityID id) {
-        return m_array[m_keys[id]];
+        const Key* key = m_keys.lookup(id);
+        ARK_ASSERT(key, "Key lookup failed with " << detail::type_name<T>() << " for entity: " << id);
+        return m_array[*key];
     }
 
     inline const T& get(EntityID id) const {
-        return m_array[m_keys[id]];
+        const Key* key = m_keys.lookup(id);
+        ARK_ASSERT(key, "Key lookup failed with " << detail::type_name<T>() << " for entity: " << id);
+        return m_array[*key];
     }
 
     T* get_if(EntityID id) {
@@ -294,8 +357,10 @@ public:
     template <typename... Args>
     T& attach(EntityID id, Args&&... args) {
         assert(!has(id) && "Attempted to attach component to entity that already posesses that component.");
+        ARK_LOG_EVERYTHING("attaching " << detail::type_name<T>() << " to entity: " << id);
         const Key new_key = m_array.insert(id, std::forward<Args>(args)...);
-        m_keys.insert(id, new_key);
+        auto x = m_keys.insert(id, new_key);
+        ARK_ASSERT(m_keys.lookup(id), "Failed to insert key into map after attaching " << detail::type_name<T>() << " to entity: " << id << " " << x);
         return m_array[new_key];
     }
 
