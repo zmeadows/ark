@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <iostream>
+#include <set>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -26,49 +27,59 @@
 
 namespace ark {
 
-// struct Entity {
-//     using TypeID = uint32_t;
-//     using TypeGen = uint32_t;
-//
-//     TypeID id;
-//     TypeGen gen;
-//
-//     friend bool operator<(const Entity& e1, const Entity& e2)
-//     {
-//         return e1.id < e2.id;
-//     }
-//
-//     friend bool operator==(const Entity& e1, const Entity& e2) {
-//         return e1.id == e2.id && e1.gen == e2.gen;
-//     }
-// };
-//
-// class EntityGraveyard {
-//     std::set<Entity> m_graveyard;
-//     Entity::TypeID m_fresh;
-// public:
-//     inline void kill(Entity alive) {
-//         ARK_ASSERT( std::find_if(m_graveyard.begin(), m_graveyard.end(),
-//                                  [](const Entity& dead) {
-//                                      return dead.id == alive.id;
-//                                  }) == m_graveyard.end(),
-//             "Attempted to insert already dead entity into graveyard!");
-//
-//         m_graveyard.insert(alive);
-//     }
-//
-//     Entity new(void) {
-//         if (m_graveyard.size() > 0) {
-//             auto it = m_graveyard.begin();
-//             Entity e = *it;
-//             e.gen++;
-//             m_graveyard.erase(it);
-//         } else {
-//
-//         }
-//     }
-//     size_t graveyard_size(void);
-// };
+struct Entity {
+    using TypeID = uint32_t;
+    using TypeGen = uint32_t;
+
+    TypeID id;
+    TypeGen gen;
+
+    friend bool operator<(const Entity& e1, const Entity& e2)
+    {
+        return e1.id < e2.id;
+    }
+
+    friend bool operator==(const Entity& e1, const Entity& e2) {
+        return e1.id == e2.id && e1.gen == e2.gen;
+    }
+};
+
+class EntityGraveyard {
+    // We must use an ordered set here to keep track of the smallest available dead entity id.
+    // It is still very fast though, because we are never iterating over it only doing 2 things:
+    // 1. Inserting random dead entity ids
+    // 2. Popping out the smallest id in the set
+    std::set<Entity> m_graveyard;
+    Entity::TypeID m_fresh = 0;
+public:
+    inline void kill(Entity alive) {
+        ARK_ASSERT( std::find_if(m_graveyard.begin(), m_graveyard.end(),
+                                 [](const Entity& dead) {
+                                     return dead.id == alive.id;
+                                 }) == m_graveyard.end(),
+            "Attempted to insert already dead entity into graveyard!");
+
+        m_graveyard.insert(alive);
+    }
+
+    Entity get(void) {
+        Entity e;
+        if (m_graveyard.size() > 0) {
+            auto it = m_graveyard.begin();
+            e = *it;
+            e.gen++;
+            m_graveyard.erase(it);
+            return e;
+        } else {
+            e.id = m_fresh;
+            e.gen = 0;
+            m_fresh++;
+            return e;
+        }
+    }
+
+    size_t graveyard_size(void) const { return m_graveyard.size(); }
+};
 
 using EntityID = uint32_t;
 
