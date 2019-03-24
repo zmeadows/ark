@@ -1,16 +1,17 @@
 ark is an entity component system focused on performance through data-oriented design, compile-time metaprogramming, and effortless parallelization.
 
 Some notable features include:
-    * Customizable component storage, similar to specs: https://slide-rs.github.io/specs/
-        * unique self-defragmenting 'bucket array' component storage provided by default
-    * Easy parallelization via behind-the-scenes thread pool 
-        * Entity level: ```for_each``` --> ```for_each_par``` 
-        * System level: ```run_systems_sequential``` --> ```run_systems_parallel``` 
-    * Concrete notion of a 'System' as a struct with specific typedefs and a 'run' method
-    * Loose coupling.
-        * Systems don't need to know about the entire 'World'.
-        * System/World communication handled by a small number of 'handle' types in ark/system.hpp
-    * No inheritance, no exceptions, no RTTI
+
+* Customizable component storage, similar to specs: https://slide-rs.github.io/specs/
+  * unique self-defragmenting 'bucket array' component storage provided by default
+* Easy parallelization via behind-the-scenes thread pool 
+  * Entity level: ```for_each``` --> ```for_each_par``` 
+  * System level: ```run_systems_sequential``` --> ```run_systems_parallel``` 
+* Concrete notion of a 'System' as a struct with specific typedefs and a 'run' method
+* Loose coupling.
+  * Systems don't need to know about the entire 'World'.
+  * System/World communication handled by a small number of 'handle' types in ark/system.hpp
+* No inheritance, no exceptions, no RTTI
 
 ### Acknowledgements/Inspiration:
 
