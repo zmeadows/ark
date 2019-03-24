@@ -24,5 +24,5 @@ Mike Acton for the famous talk you've probably already heard. If not: https://ww
 Malte Skarupke for his great work on optimizing radix sort and open addressing hash tables. Check out his blog: https://probablydance.com/
 
 Other ECS implementations:
-    * specs (Rust): https://slide-rs.github.io/specs/
-    * entt (C++17): https://github.com/skypjack/entt
+* specs (Rust): https://slide-rs.github.io/specs/
+* entt (C++17): https://github.com/skypjack/entt
