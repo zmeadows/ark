@@ -2,6 +2,7 @@
 
 #include "ark/prelude.hpp"
 #include "ark/flat_hash_map.hpp"
+#include "ark/third_party/skarupke/ska_sort.hpp"
 
 #include <array>
 #include <assert.h>
@@ -9,9 +10,11 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <math.h>
 #include <memory>
 #include <new>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -25,6 +28,12 @@ class BucketArrayStorage;
 }
 
 namespace ark::storage {
+
+template <typename T>
+struct is_bucket_array : std::false_type {};
+
+template <typename T, size_t N>
+struct is_bucket_array<BucketArrayStorage<T,N>> : std::true_type {};
 
 template <typename T, size_t N>
 class Bucket {
@@ -247,14 +256,28 @@ class BucketArrayStorage {
     EntityMap<Key> m_keys;
     std::vector<EntityID> m_sort_buffer;
 
+    size_t m_removals_since_defrag;
+
 public:
     using ComponentType = T;
 
-    BucketArrayStorage(void) : m_sort_buffer() {
-        m_sort_buffer.reserve(10*N);
+    BucketArrayStorage(void) : m_removals_since_defrag(0)
+    {}
+
+    double fragmentation_factor(void) const {
+        return (double) m_removals_since_defrag / ((double) N * (double) m_array.num_buckets());
     }
 
+    std::optional<double> estimate_maintenance_time(void) const {
+        if (fragmentation_factor() > 0.1) {
+            return std::log((double)N) * (0.00035 + 3.4e-9 * (double) m_removals_since_defrag);
+        } else {
+            return {};
+        }
+    };
+
     void maintenance(void) {
+        m_removals_since_defrag = 0;
         const size_t num_buckets = m_array.num_buckets();
         const size_t total_slots = num_buckets * N;
         m_sort_buffer.reserve(total_slots);
@@ -263,19 +286,14 @@ public:
         // update sort buffer
         for (size_t ibucket = 0; ibucket < num_buckets; ibucket++) {
             auto* bucket = m_array.get_ith_bucket(ibucket);
+            bucket->m_num_active_slots = 0;
+            bucket->m_next_open_slot = 0;
             for (size_t islot = 0; islot < N; islot++) {
                 m_sort_buffer.push_back(bucket->entity_at_slot(islot));
             }
         }
 
-        std::sort(m_sort_buffer.begin(), m_sort_buffer.end());
-
-        // reset bucket meta-data
-        for (size_t ibucket = 0; ibucket < m_array.num_buckets(); ibucket++) {
-            auto* bucket = m_array.get_ith_bucket(ibucket);
-            bucket->m_num_active_slots = 0;
-            bucket->m_next_open_slot = 0;
-        }
+        ska_sort(m_sort_buffer.begin(), m_sort_buffer.end());
 
         // re-order the bucket arrays in order of entity-ids and update entity/key meta-data
         for (size_t ibucket = 0; ibucket < m_array.num_buckets(); ibucket++) {
@@ -368,6 +386,7 @@ public:
         const Key old_key = m_keys[id];
         m_array.remove(old_key);
         m_keys.remove(id);
+        m_removals_since_defrag++;
     }
 };
 

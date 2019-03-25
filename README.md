@@ -45,7 +45,8 @@ struct TestSystem {
 	   auto [ position, velocity ] = data;
 
        followed.for_each([&] (const EntityID id) -> void {
-           pos[id].update(0.016, vel[id]);
+           // we now use EntityId as an index into component storage
+           position[id].advance(0.016, velocity[id]);
        });
     }
 };

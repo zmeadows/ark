@@ -6,13 +6,17 @@
 #include "ark/flat_entity_set.hpp"
 #include "ark/flat_hash_map.hpp"
 #include "ark/third_party/ThreadPool.hpp"
+#include "ark/storage/bucket_array.hpp"
 
 #include <array>
 #include <bitset>
+#include <chrono>
 #include <iostream>
 #include <optional>
 #include <thread>
 #include <tuple>
+
+using namespace std::chrono;
 
 namespace ark {
 
@@ -377,6 +381,39 @@ class World {
         }
     }
 
+    template <typename T> requires Component<T>
+    float defragment_component_storage(double time_left) {
+        if constexpr(storage::is_bucket_array<typename T::Storage>::value) {
+            typename T::Storage* store = m_component_stash.template get<T>();
+            const std::optional<double> predicted_time = store->estimate_maintenance_time();
+            if (predicted_time && *predicted_time < time_left) {
+                const auto start = high_resolution_clock::now();
+                store->maintenance();
+                const auto end = high_resolution_clock::now();
+                const double dur = duration_cast<duration<double>>(end - start).count();
+                return time_left - dur;
+            } else {
+                return time_left;
+            }
+        } else {
+            return time_left;
+        }
+    }
+
+    void run_maintanence(float allowed_time) {
+        run_maintanence(allowed_time, AllComponents());
+    }
+
+    template <typename T, typename... Ts>
+    void run_maintanence(float allowed_time, const TypeList<T,Ts...>&) {
+        allowed_time = defragment_component_storage<T>(allowed_time);
+        run_maintanence(allowed_time, TypeList<Ts...>());
+    }
+
+    void run_maintanence(float, const TypeList<>&) {
+        return;
+    }
+
     template <typename... Ts>
     inline void post_process_system_data(const detail::type_tag<std::tuple<Ts...>>&) {
         (post_process_system_data_member<Ts>(), ...);
@@ -476,12 +513,6 @@ public:
         return (size_t) std::max(hardware - 2, 1);
     }
 
-    template <typename T>
-    void run_storage_maintenance(void) {
-        typename T::Storage* store = m_component_stash.template get<T>();
-        store->maintenance();
-    }
-
     template <typename Callable>
     static World* init( Callable&& resource_initializer
                       , size_t nthreads = default_nthreads())
@@ -505,7 +536,6 @@ public:
     inline void run_systems_sequential() {
         (run_system_sequential<Ts>(), ...);
     }
-
 
     template <typename... Ts>
     void run_systems_parallel() {
@@ -536,6 +566,10 @@ public:
     inline void build_entities(Callable&& f) {
         f(EntityBuilder<AllComponents>(&m_component_stash, &m_new_entity_roster));
         post_process_newly_created_entities();
+    }
+
+    void post_frame_upkeep(double allotted_time) {
+        run_maintanence(allotted_time, AllComponents());
     }
 
     inline size_t entity_count(void) const { return m_num_entities; }

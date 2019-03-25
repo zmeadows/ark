@@ -1,4 +1,4 @@
-ARK_BENCHMARK_FLAGS="-Wall -Wextra -O3 -fno-exceptions -fno-rtti -march=native -std=gnu++2a -Wno-narrowing -Werror -Wno-unused-but-set-parameter -Wno-unused-variable -fconcepts -pedantic -I../include/ -pthread -DNDEBUG"
+ARK_BENCHMARK_FLAGS="-Wall -Wextra -O3 -fno-exceptions -fno-rtti -march=native -std=gnu++2a -Wno-narrowing -Werror -Wno-unused-but-set-parameter -Wno-unused-variable -fconcepts -pedantic -I../../include -I../ -Wno-implicit-fallthrough -pthread"
 
 if [ $# -eq 0 ]
   then

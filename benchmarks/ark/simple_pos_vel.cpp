@@ -1,12 +1,9 @@
 #include "ark/ark.hpp"
-#include "ark/storage/bucket_array.hpp"
+#include "types.hpp"
 #include "benchmark.hpp"
 
 #include <iostream>
 #include <cstdlib>
-
-#include <chrono>
-using namespace std::chrono;
 
 using namespace ark;
 using ark::bench::Position;
@@ -22,11 +19,9 @@ struct TestSystem {
     static void run(FollowedEntities followed, SystemData data) {
 	   auto [ position, velocity ] = data;
 
-       followed.for_each_par([&] (const EntityID id) -> void {
+       followed.for_each([&] (const EntityID id) -> void {
            Position& pos = position[id];
            const Velocity& vel = velocity[id];
-           // pos.x += dt * vel.x;
-           // pos.y += dt * vel.y;
        });
     }
 };
@@ -36,26 +31,26 @@ using GameSystems    = TypeList<TestSystem>;
 using GameWorld      = World<GameComponents, GameSystems>;
 
 int main() {
-    const size_t num_entities = 100000;
-    bench::start("simple one-system (position + velocity)", num_entities);
+    auto build_world = [] (size_t num_entities) {
+        GameWorld* world = GameWorld::init([](auto&){});
+        world->build_entities([&](EntityBuilder<GameComponents> builder) {
+            for (size_t i = 0; i < num_entities; i++) {
+                builder.new_entity()
+                    .attach<Position>(Position{0.f, 0.f})
+                    .attach<Velocity>(Velocity{1.f, 1.f});
+            }
+        });
+        return world;
+    };
 
-    GameWorld* world = GameWorld::init([](auto&) {});
-
-    world->build_entities([](EntityBuilder<GameComponents> builder) {
-        for (size_t i = 0; i < num_entities; i++) {
-            builder.new_entity()
-                .attach<Position>(Position{0.f, 0.f})
-                .attach<Velocity>(Velocity{0.1f, 0.1f});
-        }
-    });
-
-
-    auto bench_result = benchmark([world]() {
+    auto iterate_world = [] (GameWorld* world) {
         world->run_all_systems_sequential();
-    }, 5e3);
+    };
 
-    bench_result.print("time per system iteration");
-    bench::end();
+    for (size_t num_entities : {1000000}) {
+        ecs_bench("one system + two components + empty update", "ark",
+                  num_entities, build_world, iterate_world);
+    }
 
     return 0;
 }

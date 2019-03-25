@@ -15,7 +15,6 @@ concept bool ComponentStorage = requires(S* store, const S* const_store, EntityI
     { const_store->has(id) } -> bool;
     { store->attach(id)    } -> typename S::ComponentType&;
     { store->detach(id)    } -> void;
-    { store->maintenance() } -> void;
 };
 
 template <typename C>

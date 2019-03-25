@@ -26,50 +26,6 @@
 
 namespace ark {
 
-// struct Entity {
-//     using TypeID = uint32_t;
-//     using TypeGen = uint32_t;
-//
-//     TypeID id;
-//     TypeGen gen;
-//
-//     friend bool operator<(const Entity& e1, const Entity& e2)
-//     {
-//         return e1.id < e2.id;
-//     }
-//
-//     friend bool operator==(const Entity& e1, const Entity& e2) {
-//         return e1.id == e2.id && e1.gen == e2.gen;
-//     }
-// };
-//
-// class EntityGraveyard {
-//     std::set<Entity> m_graveyard;
-//     Entity::TypeID m_fresh;
-// public:
-//     inline void kill(Entity alive) {
-//         ARK_ASSERT( std::find_if(m_graveyard.begin(), m_graveyard.end(),
-//                                  [](const Entity& dead) {
-//                                      return dead.id == alive.id;
-//                                  }) == m_graveyard.end(),
-//             "Attempted to insert already dead entity into graveyard!");
-//
-//         m_graveyard.insert(alive);
-//     }
-//
-//     Entity new(void) {
-//         if (m_graveyard.size() > 0) {
-//             auto it = m_graveyard.begin();
-//             Entity e = *it;
-//             e.gen++;
-//             m_graveyard.erase(it);
-//         } else {
-//
-//         }
-//     }
-//     size_t graveyard_size(void);
-// };
-
 using EntityID = uint32_t;
 
 EntityID next_entity_id(void) {

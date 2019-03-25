@@ -12,7 +12,6 @@
 
 namespace ark {
 
-
 class EntityRange {
     const EntityID* start_ptr;
     const EntityID* end_ptr;

@@ -22,6 +22,7 @@ struct is_specialization : std::false_type {};
 template<template<typename...> class Ref, typename... Args>
 struct is_specialization<Ref<Args...>, Ref>: std::true_type {};
 
+
 template<typename>
 constexpr std::size_t locate(std::size_t) {
     return std::numeric_limits<size_t>::max();

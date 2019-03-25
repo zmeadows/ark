@@ -3,9 +3,11 @@
 #include "ark/storage/bucket_array.hpp"
 #include "ark/third_party/ThreadPool.hpp"
 #include "benchmark.hpp"
+#include "types.hpp"
 
 #include <iostream>
 #include <cstdlib>
+#include <memory>
 
 #include <chrono>
 using namespace std::chrono;
@@ -73,7 +75,7 @@ struct CreateDestroySystem {
     static size_t entities_destroyed;
 
     static bool is_offscreen(const Position& pos) {
-        return pos.x*pos.x > 100.f || pos.y*pos.y > 100.f;
+        return pos.x*pos.x > 500000.f || pos.y*pos.y > 500000.f;
     }
 
     static void run(FollowedEntities followed, SystemData data) {
@@ -91,68 +93,45 @@ struct CreateDestroySystem {
 
 size_t CreateDestroySystem::entities_destroyed = 0;
 
-using GameSystems    = TypeList<TranslationSystem, RotationSystem, CreateDestroySystem>;
-using GameWorld      = World<GameComponents, GameSystems>;
+using GameSystems = TypeList<TranslationSystem, RotationSystem, CreateDestroySystem>;
+using GameWorld   = World<GameComponents, GameSystems>;
 
 int main() {
-    std::ios_base::sync_with_stdio(false);
-    std::cin.tie(NULL);
 
-    const size_t num_entities = 100000;
-    bench::start("create/destroy, 4 components, 3 systems", num_entities);
+    auto build_world = [] (size_t num_entities) -> GameWorld* {
+        GameWorld* world = GameWorld::init([](auto&){});
+        world->build_entities([&](EntityBuilder<GameComponents> builder) {
+            for (size_t i = 0; i < num_entities; i++) {
+                make_new_entity(builder);
+            }
+        });
+        return world;
+    };
 
-    GameWorld* world = GameWorld::init([](auto&) {});
-
-    world->build_entities([](EntityBuilder<GameComponents> builder) {
-        for (size_t i = 0; i < num_entities; i++) {
-            make_new_entity(builder);
-        }
-    });
-
-    auto bench_result1 = benchmark([world]() {
+    auto bench1 = [](GameWorld* world) {
         world->run_systems_sequential<TranslationSystem,RotationSystem>();
-        //world->run_systems_sequential<CreateDestroySystem>();
-    }, 1e2);
+    };
 
-    bench_result1.print("time per system iteration: no create/destroy");
-
-    auto bench_result2 = benchmark([world]() {
-        world->run_systems_parallel<TranslationSystem,RotationSystem>();
+    auto bench2 = [](GameWorld* world) {
+        const auto start = high_resolution_clock::now();
+        world->run_systems_sequential<TranslationSystem,RotationSystem>();
         world->run_systems_sequential<CreateDestroySystem>();
-    }, 1e2);
+        const auto end = high_resolution_clock::now();
+        const double dur = duration_cast<duration<double>>(end - start).count();
+        world->post_frame_upkeep(0.016 - dur);
+    };
 
-    bench_result2.print("time per system iteration: w/ create/destroy");
+    for (size_t num_entities : { 1000, 10000, 50000, 100000}) {
+        ecs_bench("two systems + four components + simple updates", "ark",
+                  num_entities, build_world, bench1);
+        ecs_bench("three systems + four components + simple updates + create/destroy", "ark",
+                  num_entities, build_world, bench2);
 
-    auto bench_result3 = benchmark([world]() {
-        world->run_systems_parallel<TranslationSystem,RotationSystem>();
-        //world->run_systems_sequential<CreateDestroySystem>();
-    }, 1e2);
-
-    bench_result3.print("time per system iteration: no bucket array maintenance");
-
-            const auto start_time = high_resolution_clock::now();
-    world->run_storage_maintenance<Position>();
-    world->run_storage_maintenance<Velocity>();
-    world->run_storage_maintenance<Angle>();
-    world->run_storage_maintenance<RotationalVelocity>();
-            const auto elapsed = high_resolution_clock::now() - start_time;
-            const double dur = duration_cast<duration<double>>(elapsed).count();
-            std::cout << "defrag time: " << dur << std::endl;
-
-    auto bench_result4 = benchmark([world]() {
-        world->run_systems_parallel<TranslationSystem,RotationSystem>();
-        //world->run_systems_sequential<CreateDestroySystem>();
-    }, 1e2);
-
-    bench_result4.print("time per system iteration: after bucket array maintanence");
-
-    //std::cout << "total entities destroyed/re-created: "
-    //          << CreateDestroySystem::entities_destroyed
-    //          << " (" << CreateDestroySystem::entities_destroyed / (double) bench_result.count
-    //          << " / iteration)"
-    //          << std::endl;
-
-    bench::end();
+        std::cout << "total entities destroyed/re-created: "
+                  << CreateDestroySystem::entities_destroyed
+                  << std::endl;
+        CreateDestroySystem::entities_destroyed = 0;
+    }
 
     return 0;
 }
