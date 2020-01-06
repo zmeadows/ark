@@ -25,11 +25,11 @@ void make_new_entity(EntityBuilder<GameComponents>& builder) {
     static std::array<Velocity,10000> random_velocities = bench::build_random_velocities<10000>();
     static size_t rand_index = 0;
     rand_index = (rand_index + 1) % 10000;
-    builder.new_entity()
-           .attach<Position>()
-           .attach<Velocity>(random_velocities[rand_index])
-           .attach<Angle>()
-           .attach<RotationalVelocity>(RotationalVelocity{0.1});
+    auto e = builder.new_entity();
+    e.attach<Position>();
+    e.attach<Velocity>(random_velocities[rand_index]);
+    e.attach<Angle>();
+    e.attach<RotationalVelocity>(RotationalVelocity{0.1});
 }
 
 struct TranslationSystem {
@@ -118,7 +118,6 @@ int main() {
         world->run_systems_sequential<CreateDestroySystem>();
         const auto end = high_resolution_clock::now();
         const double dur = duration_cast<duration<double>>(end - start).count();
-        world->post_frame_upkeep(0.016 - dur);
     };
 
     for (size_t num_entities : { 1000, 10000, 50000, 100000}) {

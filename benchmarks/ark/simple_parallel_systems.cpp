@@ -37,7 +37,7 @@ struct W1System {
     static void run(FollowedEntities followed, SystemData data) {
 	   auto [ r, w1 ] = data;
 
-       followed.for_each_par([&] (const EntityID id) -> void {
+       followed.for_each([&] (const EntityID id) -> void {
            w1[id].x += r[id].x;
        });
     }
@@ -52,8 +52,7 @@ struct W2System {
 
     static void run(FollowedEntities followed, SystemData data) {
 	   auto [ r, w2 ] = data;
-
-       followed.for_each_par([&] (const EntityID id) -> void {
+       followed.for_each([&] (const EntityID id) -> void {
            w2[id].x += r[id].x;
        });
     }
@@ -64,27 +63,29 @@ using GameSystems    = TypeList<W1System, W2System>;
 using GameWorld      = World<GameComponents, GameSystems>;
 
 int main() {
-    const size_t num_entities = 100000;
-    bench::start("simple parallel systems, 3 components: R,W1,W2", num_entities);
+    auto build_world = [] (size_t num_entities) {
+        GameWorld* world = GameWorld::init([](auto&) {});
 
-    GameWorld* world = GameWorld::init([](auto&) {});
+        world->build_entities([&](EntityBuilder<GameComponents> builder) {
+            for (size_t i = 0; i < num_entities; i++) {
+                builder.new_entity()
+                    .attach<R>()
+                    .attach<W1>()
+                    .attach<W2>();
+            }
+        });
 
-    world->build_entities([](EntityBuilder<GameComponents> builder) {
-        for (size_t i = 0; i < num_entities; i++) {
-            builder.new_entity()
-                   .attach<R>()
-                   .attach<W1>()
-                   .attach<W2>();
-        }
-    });
+        return world;
+    };
 
-    auto bench_result = benchmark([world]() {
-        // world->run_systems_parallel<W1System,W2System>();
-        world->run_all_systems_sequential();
-    }, 1e3);
+    auto iterate_world = [] (GameWorld* world) {
+        world->run_systems_parallel<W1System, W2System>();
+    };
 
-    bench_result.print("time per system iteration");
-    bench::end();
+    for (size_t num_entities : {1e6}) {
+        ecs_bench("two parallel systems, three components", "ark",
+                  num_entities, build_world, iterate_world, .5);
+    }
 
     return 0;
 }

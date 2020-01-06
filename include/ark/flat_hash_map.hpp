@@ -14,12 +14,11 @@ inline constexpr bool is_power_of_two(T n) {
     return (n & (n - 1)) == 0;
 }
 
-constexpr uint32_t hash_id(EntityID id) { return 2*id; }
+constexpr uint32_t hash_id(EntityID id) { return 3*id; }
 
 } // end namespace ark::detail
 
-
-// A simple open addressing hash table using robin hood hashing
+// An open addressing hash table using robin hood hashing
 // for mapping EntityIDs to *small types* like storage handles.
 template <typename V>
 class EntityMap {
@@ -41,12 +40,11 @@ public:
         , m_longest_probe(0)
         , m_max_load_factor(0.5)
     {
-        ARK_ASSERT(initial_capacity > 0, "Initial capacity for EntityMap must be greater than 0.");
-        ARK_ASSERT(detail::is_power_of_two(initial_capacity), "EntityMap: capacity must always be a power of two!");
+        ARK_ASSERT(initial_capacity > 0, "initial capacity must be greater than 0.");
+        ARK_ASSERT(detail::is_power_of_two(initial_capacity), "capacity must always be a power of two!");
         ARK_ASSERT(m_keys, "Failed to initialize memory for EntityMap keys");
         ARK_ASSERT(m_values, "Failed to initialize memory for EntityMap values");
 
-        // OPTIMIZE: use calloc
         for (size_t i = 0; i < m_capacity; i++) {
             m_keys[i] = EMPTY_SENTINEL;
         }
@@ -61,7 +59,7 @@ public:
 
     ~EntityMap(void) {
         for (size_t i = 0; i < m_capacity; i++) {
-            const EntityID id = m_keys[id];
+            const EntityID id = m_keys[i];
             if (id != EMPTY_SENTINEL && id != TOMBSTONE_SENTINEL) {
                 m_values[i].~V();
             }
@@ -184,7 +182,7 @@ public:
         for (size_t i = 0; i < m_capacity; i++) {
             EntityID id = m_keys[i];
             if (id != EMPTY_SENTINEL && id != TOMBSTONE_SENTINEL) {
-                new_table.insert(id, m_values[i]);
+                new_table.insert(id, std::move(m_values[i]));
             }
         }
 
@@ -197,7 +195,7 @@ public:
     V& operator[](EntityID id)
     {
         V* result = lookup(id);
-        assert(result != nullptr && "EntityMap: Called operator[] with non-existent EntityID!");
+        ARK_ASSERT(result != nullptr, "EntityMap: Called operator[] with non-existent EntityID!");
         return *result;
     }
 

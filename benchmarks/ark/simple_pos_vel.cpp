@@ -29,26 +29,29 @@ struct TestSystem {
 using GameComponents = TypeList<Position, Velocity>;
 using GameSystems    = TypeList<TestSystem>;
 using GameWorld      = World<GameComponents, GameSystems>;
+using Builder        = EntityBuilder<GameComponents>;
 
 int main() {
     auto build_world = [] (size_t num_entities) {
         GameWorld* world = GameWorld::init([](auto&){});
-        world->build_entities([&](EntityBuilder<GameComponents> builder) {
+
+        world->build_entities([&](Builder builder) {
             for (size_t i = 0; i < num_entities; i++) {
                 builder.new_entity()
                     .attach<Position>(Position{0.f, 0.f})
                     .attach<Velocity>(Velocity{1.f, 1.f});
             }
         });
+
         return world;
     };
 
     auto iterate_world = [] (GameWorld* world) {
-        world->run_all_systems_sequential();
+        world->run_systems_sequential<TestSystem>();
     };
 
-    for (size_t num_entities : {1000000}) {
-        ecs_bench("one system + two components + empty update", "ark",
+    for (size_t num_entities : {1e3, 1e4, 1e5, 1e6}) {
+        ecs_bench("one system + two components + empty update + single threaded", "ark",
                   num_entities, build_world, iterate_world);
     }
 

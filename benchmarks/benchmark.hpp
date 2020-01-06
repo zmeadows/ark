@@ -13,7 +13,7 @@ void ecs_bench(const char* label,
                size_t entity_count,
                BuildFunc&& build,
                IterFunc&& iterate,
-               double relative_precision = 0.15)
+               double relative_precision = 0.25)
 {
     std::ios_base::sync_with_stdio(false);
     std::cin.tie(NULL);
@@ -30,12 +30,12 @@ void ecs_bench(const char* label,
     std::cout << "world+entity build time: " << build_duration << " (seconds)" << std::endl;
 
     // first find appropriate benchmark chunk size
-    size_t in_chunks_of = 3;
+    uint64_t in_chunks_of = 3;
     double chunk_time = 0.0;
     double total_test_time = 0;
     double total_test_iterations = 0.0;
     while (chunk_time < 0.5) {
-        in_chunks_of = (size_t) ((double) in_chunks_of * 1.61803398875);
+        in_chunks_of *= 2;
         const auto chunk_start_time = high_resolution_clock::now();
         for (size_t i = 0; i < in_chunks_of; i++) {
             iterate(world);

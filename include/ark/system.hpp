@@ -68,6 +68,7 @@ public:
 
     template <typename Callable>
     void for_each_par(Callable&& f) {
+        //TODO: precompute ranges and only updated when followed entities change...?
         const std::vector<EntityRange> ranges = split(m_thread_pool->nthreads());
 
         std::vector<std::future<void>> results;
@@ -225,6 +226,8 @@ public:
             m_mask.set(type_list::index<T,AllComponents>());
             return *this;
         }
+
+        EntityID id(void) const { return m_id; }
 
         ~EntitySkeleton(void) {
             (*m_world_roster)[m_mask].push_back(m_id);

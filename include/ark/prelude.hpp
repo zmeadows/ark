@@ -41,7 +41,6 @@ std::string entities_to_string(const std::vector<EntityID>& entities) {
 
 namespace detail {
 
-// WARNING: this isn't very robust
 template <class T>
 constexpr std::string_view type_name()
 {
