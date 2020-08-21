@@ -29,27 +29,26 @@ class World {
     // ------------------------------------------------------------------------------------
     // Compile-time evaluated type indices for systems, components and resources
 
-    template <typename T>
-    requires System<T> static constexpr size_t system_index(void)
+    template <System T>
+    constexpr size_t system_index(void)
     {
         return type_list::index<T, AllSystems>();
     }
 
-    template <typename T>
-    requires Component<T> static constexpr size_t component_index(void)
+    template <Component T>
+    constexpr size_t component_index(void)
     {
         return type_list::index<T, AllComponents>();
     }
 
     template <typename T>
-    static constexpr size_t resource_index(void)
+    constexpr size_t resource_index(void)
     {
         return type_list::index<T, AllResources>();
     }
 
     // ------------------------------------------------------------------------------------
 
-    // TODO: remove stashes?
     ComponentStash<AllComponents> m_component_stash;
     ResourceStash<AllResources> m_resource_stash;
 
@@ -93,32 +92,32 @@ class World {
 
     std::array<FlatEntitySet, AllSystems::size> m_followed;
 
-    template <typename T>
-    requires System<T> inline void follow_new_entities(const std::vector<EntityID>& entities)
+    template <System T>
+    inline void follow_new_entities(const std::vector<EntityID>& entities)
     {
         ARK_LOG_VERBOSE(detail::type_name<T>()
                         << " following new entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].insert_new_entities(entities);
     }
 
-    template <typename T>
-    requires System<T> inline void follow_entities(const std::vector<EntityID>& entities)
+    template <System T>
+    inline void follow_entities(const std::vector<EntityID>& entities)
     {
         ARK_LOG_VERBOSE(detail::type_name<T>()
                         << " following entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].insert_entities(entities);
     }
 
-    template <typename T>
-    requires System<T> inline void unfollow_entities(const std::vector<EntityID>& entities)
+    template <System T>
+    inline void unfollow_entities(const std::vector<EntityID>& entities)
     {
         ARK_LOG_VERBOSE(detail::type_name<T>()
                         << " unfollowing entities: " << entities_to_string(entities));
         m_followed[system_index<T>()].remove_entities(entities);
     }
 
-    template <typename T>
-    requires System<T> inline FollowedEntities get_followed_entities(void)
+    template <System T>
+    inline FollowedEntities get_followed_entities(void)
     {
         return FollowedEntities(std::addressof(m_followed[system_index<T>()]), &m_thread_pool);
     }
@@ -130,8 +129,8 @@ class World {
     // TODO: reserve space in this map at creation
     EntityMap<ComponentMask> m_entity_masks;
 
-    template <typename T>
-    requires System<T> static constexpr ComponentMask system_mask(void)
+    template <System T>
+    static constexpr ComponentMask system_mask(void)
     {
         return ComponentMask(typename T::Subscriptions());
     }
@@ -150,11 +149,11 @@ class World {
     // and alert system to groups of new entities rather than each individual new entity
     std::unordered_map<ComponentMask, std::vector<EntityID>> m_new_entity_roster;
 
-    template <typename T>
-    requires System<T> inline void alert_system_new_entities_created(
-        const std::vector<EntityID>& new_entities, const ComponentMask& entity_mask)
+    template <System T>
+    inline void alert_system_new_entities_created(const std::vector<EntityID>& new_entities,
+                                                  const ComponentMask& entity_mask)
     {
-        static const ComponentMask sys_mask = system_mask<T>();
+        constexpr ComponentMask sys_mask = system_mask<T>();
         if (sys_mask.is_subset_of(entity_mask)) {
             follow_new_entities<T>(new_entities);
         }
@@ -199,9 +198,9 @@ class World {
 
     std::vector<EntityID> m_death_row;
 
-    template <typename T>
-    requires System<T> inline void alert_system_entities_destroyed(
-        const std::vector<EntityID>& destroyed_entities, const ComponentMask& destroyed_mask)
+    template <System T>
+    inline void alert_system_entities_destroyed(const std::vector<EntityID>& destroyed_entities,
+                                                const ComponentMask& destroyed_mask)
     {
         static const ComponentMask sys_mask = system_mask<T>();
         if (sys_mask.is_subset_of(destroyed_mask)) {
@@ -210,15 +209,15 @@ class World {
     }
 
     template <typename... SystemTypes>
-    inline void alert_all_systems_entities_destroyed(const std::vector<EntityID>& destroyed_entities,
-                                                     const ComponentMask& destroyed_mask,
-                                                     const TypeList<SystemTypes...>&)
+    inline void alert_all_systems_entities_destroyed(
+        const std::vector<EntityID>& destroyed_entities, const ComponentMask& destroyed_mask,
+        const TypeList<SystemTypes...>&)
     {
         (alert_system_entities_destroyed<SystemTypes>(destroyed_entities, destroyed_mask), ...);
     }
 
-    template <typename T>
-    requires Component<T> void detach_component_if_exists(const EntityID id, const ComponentMask& mask)
+    template <Component T>
+    void detach_component_if_exists(const EntityID id, const ComponentMask& mask)
     {
         if (mask.check(component_index<T>())) {
             typename T::Storage* store = m_component_stash.template get<T>();
@@ -227,7 +226,8 @@ class World {
     }
 
     template <typename... Ts>
-    void _detach_all_components(const EntityID id, const ComponentMask& mask, const TypeList<Ts...>&)
+    void _detach_all_components(const EntityID id, const ComponentMask& mask,
+                                const TypeList<Ts...>&)
     {
         (detach_component_if_exists<Ts>(id, mask), ...);
     }
@@ -280,34 +280,34 @@ class World {
 
     */// ----------------------------------------------------------------------------------
 
+    // OPTIMIZE: use llvm::SmallVector-style stack-preferred vector here as well as for
+    // m_attach_component_updates
     std::array<std::vector<EntityID>, AllComponents::size> m_detach_component_updates;
 
-    template <typename SystemType, typename ComponentType>
-    requires System<SystemType>&& Component<ComponentType> void
-    alert_system_component_detached_from_entities(const std::vector<EntityID>& entities)
+    template <System SystemType, Component ComponentType>
+    void alert_system_component_detached_from_entities(const std::vector<EntityID>& entities)
     {
         if constexpr (system_mask<SystemType>().check(component_index<ComponentType>())) {
             unfollow_entities<SystemType>(entities);
         }
     }
 
-    template <typename ComponentType, typename... SystemTypes>
-    requires Component<ComponentType> inline void _alert_all_systems_component_detached_from_entities(
+    template <Component ComponentType, typename... SystemTypes>
+    inline void _alert_all_systems_component_detached_from_entities(
         const std::vector<EntityID>& entities, const TypeList<SystemTypes...>&)
     {
         (alert_system_component_detached_from_entities<ComponentType, SystemTypes>(entities), ...);
     }
 
-    template <typename T>
-    requires Component<T> inline void alert_all_systems_component_detached_from_entities(
+    template <Component T>
+    inline void alert_all_systems_component_detached_from_entities(
         const std::vector<EntityID>& entities)
     {
         _alert_all_systems_component_detached_from_entities<T>(entities, AllSystems());
     }
 
-    template <typename T>
-    requires Component<T> void post_process_newly_detached_component(
-        const std::vector<EntityID>& entities)
+    template <Component T>
+    void post_process_newly_detached_component(const std::vector<EntityID>& entities)
     {
         for (const EntityID id : entities) {
             ComponentMask& entity_mask = m_entity_masks[id];
@@ -316,8 +316,8 @@ class World {
         alert_all_systems_component_detached_from_entities<T>(entities);
     }
 
-    template <typename T>
-    requires Component<T> void post_process_newly_detached_components(void)
+    template <Component T>
+    void post_process_newly_detached_components(void)
     {
         std::vector<EntityID>& updates = m_detach_component_updates[component_index<T>()];
         post_process_newly_detached_component<T>(updates);
@@ -336,9 +336,8 @@ class World {
 
     std::array<std::vector<EntityID>, AllComponents::size> m_attach_component_updates;
 
-    template <typename ComponentType, typename SystemType>
-    requires System<SystemType>&& Component<ComponentType> void
-    alert_system_component_attached_to_entities(const std::vector<EntityID>& entities)
+    template <Component ComponentType, System SystemType>
+    void alert_system_component_attached_to_entities(const std::vector<EntityID>& entities)
     {
         if constexpr (system_mask<SystemType>().check(component_index<ComponentType>())) {
             std::vector<EntityID> matched;
@@ -354,22 +353,21 @@ class World {
     }
 
     template <typename ComponentType, typename... SystemTypes>
-    inline void _alert_all_systems_component_attached_to_entities(const std::vector<EntityID>& entities,
-                                                                  const TypeList<SystemTypes...>&)
+    inline void _alert_all_systems_component_attached_to_entities(
+        const std::vector<EntityID>& entities, const TypeList<SystemTypes...>&)
     {
         (alert_system_component_attached_to_entities<ComponentType, SystemTypes>(entities), ...);
     }
 
-    template <typename T>
-    requires Component<T> inline void alert_all_systems_component_attached_to_entities(
+    template <Component T>
+    inline void alert_all_systems_component_attached_to_entities(
         const std::vector<EntityID>& entities)
     {
         _alert_all_systems_component_attached_to_entities<T>(entities, AllSystems());
     }
 
-    template <typename T>
-    requires Component<T> void post_process_newly_attached_component(
-        const std::vector<EntityID>& entities)
+    template <Component T>
+    void post_process_newly_attached_component(const std::vector<EntityID>& entities)
     {
         for (const EntityID id : entities) {
             ComponentMask& entity_mask = m_entity_masks[id];
@@ -378,8 +376,8 @@ class World {
         alert_all_systems_component_attached_to_entities<T>(entities);
     }
 
-    template <typename T>
-    requires Component<T> void post_process_newly_attached_components(void)
+    template <Component T>
+    void post_process_newly_attached_components(void)
     {
         std::vector<EntityID>& updates = m_attach_component_updates[component_index<T>()];
         post_process_newly_attached_component<T>(updates);
@@ -416,7 +414,7 @@ class World {
         }
     }
 
-    // template <typename T> requires Component<T>
+    // template <Component T>
     // float defragment_component_storage(double time_left) {
     //     if constexpr(storage::is_bucket_array<typename T::Storage>::value) {
     //         typename T::Storage* store = m_component_stash.template get<T>();
@@ -455,8 +453,8 @@ class World {
         (post_process_system_data_member<Ts>(), ...);
     }
 
-    template <typename T>
-    requires System<T> inline void post_process_system_data(void)
+    template <System T>
+    inline void post_process_system_data(void)
     {
         static const auto tag = detail::type_tag<typename T::SystemData>();
         post_process_system_data(tag);
@@ -464,16 +462,16 @@ class World {
 
     // ------------------------------------------------------------------------------------
 
-    template <typename T>
-    requires System<T> void run_system(void)
+    template <System T>
+    void run_system(void)
     {
         static const auto tag = detail::type_tag<typename T::SystemData>();
         typename T::SystemData data = build_system_data(tag);
         T::run(get_followed_entities<T>(), data);
     }
 
-    template <typename T>
-    requires System<T> void run_system_and_postprocess(void)
+    template <System T>
+    void run_system_and_postprocess(void)
     {
         run_system<T>();
         post_process_system_data<T>();
@@ -527,8 +525,8 @@ class World {
 
     ThreadPool m_thread_pool;
 
-    template <typename T>
-    requires System<T> inline void start_system_in_parallel(std::vector<std::future<void>>& results)
+    template <System T>
+    inline void start_system_in_parallel(std::vector<std::future<void>>& results)
     {
         results.emplace_back(m_thread_pool.enqueue([this]() { this->run_system<T>(); }));
     }
