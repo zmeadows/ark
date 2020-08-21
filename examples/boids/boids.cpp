@@ -89,7 +89,7 @@ public:
 };
 
 template <typename R>
-concept bool Rule = requires(R rule)
+concept Rule = requires(R rule)
 {
     {
         rule.delta
@@ -310,7 +310,8 @@ struct RuleAvgVel {
 struct AvgVelRuleSystem {
     using Subscriptions = TypeList<Boid, RuleAvgVel>;
 
-    using SystemData = std::tuple<ReadComponent<Boid>, WriteComponent<RuleAvgVel>, ReadResource<Grid>>;
+    using SystemData =
+        std::tuple<ReadComponent<Boid>, WriteComponent<RuleAvgVel>, ReadResource<Grid>>;
 
     static constexpr real_t STRENGTH = 1.5;
 
@@ -384,7 +385,8 @@ struct RuleDensity {
 struct DensityRuleSystem {
     using Subscriptions = TypeList<Boid, RuleDensity>;
 
-    using SystemData = std::tuple<ReadComponent<Boid>, WriteComponent<RuleDensity>, ReadResource<Grid>>;
+    using SystemData =
+        std::tuple<ReadComponent<Boid>, WriteComponent<RuleDensity>, ReadResource<Grid>>;
 
     static constexpr real_t STRENGTH = 100;
 
@@ -471,7 +473,8 @@ struct DrawSystem {
 
         followed.for_each([&](const EntityID id) -> void {
             const Boid& b = boid[id];
-            glColor3f(b.vel.magnitude() / 300., std::fabs(b.vel.x) / 200., std::fabs(b.vel.y) / 200.);
+            glColor3f(b.vel.magnitude() / 300., std::fabs(b.vel.x) / 200.,
+                      std::fabs(b.vel.y) / 200.);
             glVertex2f(b.pos.x, b.pos.y);
         });
     }
@@ -550,11 +553,10 @@ static void tick(void)
 
 int boids_main(int argc, char** argv)
 {
-    g_world = BoidWorld::init(
-        [](ResourceStash<BoidResources>& resources) {
-            resources.construct_and_own<DeltaTime>(0.004);
-            resources.construct_and_own<Grid>();
-        });
+    g_world = BoidWorld::init([](ResourceStash<BoidResources>& resources) {
+        resources.construct_and_own<DeltaTime>(0.004);
+        resources.construct_and_own<Grid>();
+    });
 
     g_world->build_entities([&](EntityBuilder<BoidComponents> builder) {
         for (size_t i = 0; i < NUM_BOIDS; i++) {
