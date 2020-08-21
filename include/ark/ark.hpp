@@ -531,8 +531,6 @@ class World {
         results.emplace_back(m_thread_pool.enqueue([this]() { this->run_system<T>(); }));
     }
 
-    World(size_t nthreads) : m_num_entities(0), m_thread_pool(nthreads) {}
-
 public:
     World(const World&) = delete;
     World(World&&) = delete;
@@ -546,6 +544,8 @@ public:
         // don't want to max out by default, to avoid locking the system
         return (size_t)std::max(hardware - 2, 1);
     }
+
+    World(size_t nthreads = default_nthreads()) : m_num_entities(0), m_thread_pool(nthreads) {}
 
     template <typename Callable>
     static World* init(Callable&& resource_initializer, size_t nthreads = default_nthreads())
