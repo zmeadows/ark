@@ -3,7 +3,7 @@
 </p>
 
 ark is an entity component system focused on performance through data-oriented design, compile-time evaluation, and effortless parallelization.
-Currently written in C++20 and requires g++ for concepts.
+Currently written in C++20 and requires gcc 10 (or later) for concepts support.
 
 Some notable features include:
 
