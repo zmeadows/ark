@@ -18,6 +18,8 @@
 
 using namespace std::chrono;
 
+// clang-format off
+
 namespace ark {
 
 template <typename AllComponents, typename AllSystems, typename AllResources = TypeList<>>
@@ -49,43 +51,10 @@ class World {
 
     // ------------------------------------------------------------------------------------
 
+    // TODO: Both ComponentStash and ResourceStash are very shallow classes.
+    // Simply remove them and implement their behavior inline here in ark::World.
     ComponentStash<AllComponents> m_component_stash;
     ResourceStash<AllResources> m_resource_stash;
-
-    size_t m_num_entities;
-
-    // ------------------------------------------------------------------------------------
-    // Profiling
-
-    /*
-    static constexpr size_t PROFILE_FRAME_GROUP = 30;
-
-    class TimingProfiler {
-        std::array<size_t, PROFILE_FRAME_GROUP> m_recent_ns;
-        size_t m_index;
-
-        std::vector<double> m_history_ms;
-
-    public:
-        void start_timer(void);
-        void stop_timer(void);
-
-        const std::vector<double>& history_ms(void) const { return m_history_ms; }
-        const double last_iteration_time_ms(void) const;
-    };
-
-    class MemoryProfiler {
-        std::array<size_t, PROFILE_FRAME_GROUP> m_used_kb;
-        std::array<size_t, PROFILE_FRAME_GROUP> m_allocated_kb;
-        std::vector<size_t> m_history_kb;
-
-    public:
-        void profile(void);
-    };
-
-    std::unordered_map<size_t, SystemProfiler> m_system_profilers;
-    std::unordered_map<size_t, ComponentProfiler> m_component_profilers;
-    */
 
     // ------------------------------------------------------------------------------------
     // System information
@@ -124,9 +93,18 @@ class World {
 
     // ------------------------------------------------------------------------------------
 
-    using ComponentMask = TypeMask<AllComponents>;
 
-    // TODO: reserve space in this map at creation
+    // For each active entity we retain a bitmask for quickly determining whether
+    // or not each individual entity has a particular component attached (1) or not (0).
+    // Which bit corresponds to which component is determined at compile time by the order of
+    // components in the AllComponents template argument to ark::World.
+    // The primary use-case of this bitmask is to notify any relevant systems upon entity
+    // creation/destruction when the new entity's component bitmask matches the system's set
+    // of followed components, which is also represented as a bitmask. This allows us to use
+    // a single bitwise AND operation per system to determine if an entity is followed or not.
+    // example: bool is_followed = (system_mask & entity_mask) == system_mask.
+
+    using ComponentMask = TypeMask<AllComponents>;
     EntityMap<ComponentMask> m_entity_masks;
 
     template <System T>
@@ -146,7 +124,12 @@ class World {
     */// ----------------------------------------------------------------------------------
 
     // Since similar entities tend to be created together, we group them by ComponentMask
-    // and alert system to groups of new entities rather than each individual new entity
+    // and alert system to groups of new entities all at once, rather than each individual
+    // new entity. This allows for more efficient operations such as insertion of new groups
+    // of entities in each System's followed entity set.
+
+    size_t m_num_entities;
+
     std::unordered_map<ComponentMask, std::vector<EntityID>> m_new_entity_roster;
 
     template <System T>
@@ -239,6 +222,7 @@ class World {
 
     void post_process_destroyed_entities(void)
     {
+		//TODO: make this non-static
         static std::unordered_map<ComponentMask, std::vector<EntityID>> destroyed_roster;
 
         if (m_death_row.empty()) return;
@@ -246,20 +230,25 @@ class World {
         ARK_LOG_VERBOSE("destroying " << m_death_row.size()
                                       << " entities: " << entities_to_string(m_death_row));
 
+
+        // with the destroyed_roster we group entities by component mask and destroy them
+        // in batch, for better performance in cases where many similar entities are destroyed
+        // at once.
         for (const EntityID id : m_death_row) {
-            m_num_entities--;
             const ComponentMask mask = m_entity_masks[id];
             m_entity_masks.remove(id);
-            auto it = destroyed_roster.find(mask);
-            if (it != destroyed_roster.end()) {
+
+            if (auto it = destroyed_roster.find(mask); it != destroyed_roster.end()) {
                 it->second.push_back(id);
+            } else {
+                destroyed_roster.emplace(mask, {id});
             }
-            else {
-                destroyed_roster.emplace(mask, std::vector<EntityID>(1, id));
-            }
+
+            // alert all relevant component storage to release dead entities components
             detach_all_components(id, mask);
         }
 
+        const auto dead_entity_count = m_death_row.size();
         m_death_row.clear();
 
         for (auto& [mask, destroyed_entities] : destroyed_roster) {
@@ -268,6 +257,9 @@ class World {
                 destroyed_entities.clear();
             }
         }
+
+        assert(m_num_entities >= dead_entity_count);
+        m_num_entities -= dead_entity_count;
     }
 
     /* ------------------------------------------------------------------------------------
@@ -292,6 +284,7 @@ class World {
         }
     }
 
+    // TODO: Can we combine the two methods below?
     template <Component ComponentType, typename... SystemTypes>
     inline void _alert_all_systems_component_detached_from_entities(
         const std::vector<EntityID>& entities, const TypeList<SystemTypes...>&)
@@ -310,9 +303,15 @@ class World {
     void post_process_newly_detached_component(const std::vector<EntityID>& entities)
     {
         for (const EntityID id : entities) {
+            // The newly removed components are already stripped from the relevant component
+            // storage at this point, but we still have to update the component mask for each
+            // entity with a newly removed component.
             ComponentMask& entity_mask = m_entity_masks[id];
             entity_mask.unset(component_index<T>());
         }
+
+        // Any system that subscribed to the component that was removed must be notified
+        // to un-follow all of these entities.
         alert_all_systems_component_detached_from_entities<T>(entities);
     }
 
@@ -340,8 +339,12 @@ class World {
     void alert_system_component_attached_to_entities(const std::vector<EntityID>& entities)
     {
         if constexpr (system_mask<SystemType>().check(component_index<ComponentType>())) {
-            std::vector<EntityID> matched;
+            std::vector<EntityID> matched; // TODO: keep this buffer allocated as class member
             matched.reserve(entities.size());
+
+            // Even if a System's component bitmask includes the newly attached component,
+            // we still have to check if the updated entity's bitmask matches the full
+            // set of components subscribed to by the System.
             for (const EntityID id : entities) {
                 const ComponentMask& entity_mask = m_entity_masks[id];
                 if (system_mask<SystemType>().is_subset_of(entity_mask)) {
@@ -352,6 +355,7 @@ class World {
         }
     }
 
+    // TODO: Can we combine the two methods below?
     template <typename ComponentType, typename... SystemTypes>
     inline void _alert_all_systems_component_attached_to_entities(
         const std::vector<EntityID>& entities, const TypeList<SystemTypes...>&)
@@ -370,9 +374,13 @@ class World {
     void post_process_newly_attached_component(const std::vector<EntityID>& entities)
     {
         for (const EntityID id : entities) {
+            // The new components are already attached and present in the relevant component
+            // storage at this point, but we still have to update the component mask for each
+            // entity with a newly attached component.
             ComponentMask& entity_mask = m_entity_masks[id];
             entity_mask.set(component_index<T>());
         }
+
         alert_all_systems_component_attached_to_entities<T>(entities);
     }
 
@@ -385,6 +393,16 @@ class World {
     }
 
     // ------------------------------------------------------------------------------------
+
+    // ark::World state upkeep must be done after a System::run method performs certain operations
+    // such as creating/destroying entities and attaching/detaching components.
+    // For example, if a system attaches a new component to an entity, the entity may need to be
+    // followed by other systems which subscribe to its newly-updated component mask.
+    // For performance reasons it is better to wait until a system is finished with the 'run'
+    // method and perform all relevant post-processing in batch at once to all relevant entities.
+    // The only important side-effect of this is that the ark::World state concerning which systems
+    // follow which entities is not updated until *after* (not during) each System::run call.
+    // Luckily, from the end-user perspective, this is irrelevant.
 
     template <typename T>
     void post_process_system_data_member(void)
@@ -414,39 +432,6 @@ class World {
         }
     }
 
-    // template <Component T>
-    // float defragment_component_storage(double time_left) {
-    //     if constexpr(storage::is_bucket_array<typename T::Storage>::value) {
-    //         typename T::Storage* store = m_component_stash.template get<T>();
-    //         const std::optional<double> predicted_time = store->estimate_maintenance_time();
-    //         if (predicted_time && *predicted_time < time_left) {
-    //             const auto start = high_resolution_clock::now();
-    //             store->maintenance();
-    //             const auto end = high_resolution_clock::now();
-    //             const double dur = duration_cast<duration<double>>(end - start).count();
-    //             return time_left - dur;
-    //         } else {
-    //             return time_left;
-    //         }
-    //     } else {
-    //         return time_left;
-    //     }
-    // }
-
-    // void run_maintanence(float allowed_time) {
-    //     run_maintanence(allowed_time, AllComponents());
-    // }
-
-    // template <typename T, typename... Ts>
-    // void run_maintanence(float allowed_time, const TypeList<T,Ts...>&) {
-    //     allowed_time = defragment_component_storage<T>(allowed_time);
-    //     run_maintanence(allowed_time, TypeList<Ts...>());
-    // }
-
-    // void run_maintanence(float, const TypeList<>&) {
-    //     return;
-    // }
-
     template <typename... Ts>
     inline void post_process_system_data(const detail::type_tag<std::tuple<Ts...>>&)
     {
@@ -456,7 +441,7 @@ class World {
     template <System T>
     inline void post_process_system_data(void)
     {
-        static const auto tag = detail::type_tag<typename T::SystemData>();
+        constexpr auto tag = detail::type_tag<typename T::SystemData>();
         post_process_system_data(tag);
     }
 
@@ -465,7 +450,7 @@ class World {
     template <System T>
     void run_system(void)
     {
-        static const auto tag = detail::type_tag<typename T::SystemData>();
+        constexpr auto tag = detail::type_tag<typename T::SystemData>();
         typename T::SystemData data = build_system_data(tag);
         T::run(get_followed_entities<T>(), data);
     }
@@ -513,6 +498,8 @@ class World {
         }
     }
 
+    // For each system we construct a std::tuple containing each data type requested in the
+    // SystemData typedef, in the proper order.
     template <typename... Ts>
     inline std::tuple<Ts...> build_system_data(const detail::type_tag<std::tuple<Ts...>>&)
     {
@@ -572,8 +559,8 @@ public:
     void run_systems_parallel()
     {
         static_assert(sizeof...(Ts) > 0, "Must pass >= 1 system type to run_systems_parallel.");
-        // TODO: Verify Systems can be run in parallel
         std::vector<std::future<void>> results;
+        results.reserve(sizeof...(Ts));
         (start_system_in_parallel<Ts>(results), ...);
         for (auto&& result : results) {
             result.get();
@@ -594,11 +581,9 @@ public:
         post_process_newly_created_entities();
     }
 
-    // void post_frame_upkeep(double allotted_time) {
-    //     run_maintanence(allotted_time, AllComponents());
-    // }
-
     inline size_t entity_count(void) const { return m_num_entities; }
 };
 
 }  // end namespace ark
+
+// clang-format on

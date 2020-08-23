@@ -30,12 +30,6 @@ class FollowedEntities {
     FlatEntitySet* m_set;
     ThreadPool* m_thread_pool;
 
-public:
-    FlatEntitySet::const_iterator begin(void) const { return m_set->cbegin(); }
-    FlatEntitySet::const_iterator end(void) const { return m_set->cend(); }
-
-    inline size_t size(void) const { return m_set->size(); }
-
     std::vector<EntityRange> split(size_t n)
     {
         std::vector<EntityRange> result;
@@ -63,6 +57,12 @@ public:
 
         return result;
     }
+
+public:
+    FlatEntitySet::const_iterator begin(void) const { return m_set->cbegin(); }
+    FlatEntitySet::const_iterator end(void) const { return m_set->cend(); }
+
+    inline size_t size(void) const { return m_set->size(); }
 
     template <typename Callable>
     inline void for_each(Callable&& f)
@@ -97,6 +97,7 @@ public:
 };
 
 // clang-format off
+
 template <typename S>
 concept System = requires (FollowedEntities followed, typename S::SystemData data)
 {
