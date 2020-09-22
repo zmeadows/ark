@@ -1,0 +1,9 @@
+AccessModifierOffset : -4
+AllowShortIfStatementsOnASingleLine : true
+BreakBeforeBraces : Stroustrup
+ColumnLimit : 95
+DerivePointerAlignment : false
+PointerAlignment : Left
+IndentWidth : 4
+IndentCaseLabels : true
+AlwaysBreakTemplateDeclarations : Yes
