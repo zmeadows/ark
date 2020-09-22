@@ -51,10 +51,10 @@ struct hash_impl
   result_type
   operator()( array_t const & arr ) const noexcept
   {
-    if( n_words == 0 ) return 0;
-    if( n_words == 1 )
+    if constexpr ( n_words == 0 ) return 0;
+    if constexpr ( n_words == 1 )
     {
-      if( easy_bits ) return arr[0];
+      if constexpr ( easy_bits ) return arr[0];
       return to_result_t( arr[0] );
     } // if n_words == 1
 
@@ -79,7 +79,7 @@ struct hash_impl
   {
     result_type ret_val= 0;
 
-    if( easy_ratio )
+    if constexpr ( easy_ratio )
     {
       for( size_t c= 0; c < n_words; c += size_t_div )
       {
