@@ -13,17 +13,17 @@
 #include "ark/type_list.hpp"
 
 #ifndef NDEBUG
-#define ARK_ASSERT(condition, message)                                                   \
-    do {                                                                                 \
-        if (!(condition)) {                                                              \
-            std::cerr << "Assertion `" #condition "` failed in " << __FILE__ << " line " \
-                      << __LINE__ << ": " << message << std::endl;                       \
-            std::terminate();                                                            \
-        }                                                                                \
+#define ARK_ASSERT(condition, message)                                                        \
+    do {                                                                                      \
+        if (!(condition)) {                                                                   \
+            std::cerr << "Assertion `" #condition "` failed in " << __FILE__ << " line "      \
+                      << __LINE__ << ": " << message << std::endl;                            \
+            std::terminate();                                                                 \
+        }                                                                                     \
     } while (false)
 #else
-#define ARK_ASSERT(condition, message) \
-    do {                               \
+#define ARK_ASSERT(condition, message)                                                        \
+    do {                                                                                      \
     } while (false)
 #endif
 
@@ -40,7 +40,8 @@ EntityID next_entity_id(void)
 std::string entities_to_string(const std::vector<EntityID>& entities)
 {
     std::stringstream ss;
-    for (auto id : entities) ss << id << " ";
+    for (auto id : entities)
+        ss << id << " ";
     return ss.str();
 }
 
@@ -81,6 +82,5 @@ concept SameHelper = std::is_same_v<T, U>;
 template <class T, class U>
 concept Same = detail::SameHelper<T, U>&& detail::SameHelper<U, T>;
 
-}  // namespace detail
-}  // end namespace ark
-
+} // namespace detail
+} // end namespace ark

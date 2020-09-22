@@ -67,7 +67,8 @@ public:
     template <typename Callable>
     inline void for_each(Callable&& f)
     {
-        for (const EntityID id : *m_set) f(id);
+        for (const EntityID id : *m_set)
+            f(id);
     }
 
     template <typename Callable>
@@ -97,15 +98,22 @@ public:
 };
 
 // clang-format off
-
 template <typename S>
-concept System = requires (FollowedEntities followed, typename S::SystemData data)
+concept System = requires
 {
-    typename S::SystemData;
+    // typename S::SystemData;
     typename S::Subscriptions;
-    { S::run(followed, data) } -> std::same_as<void>;
+    // { S::run(followed, data) } -> std::same_as<void>;
 };
 // clang-format on
+
+template <typename>
+struct RunFnArgs;
+
+template <typename... Args>
+struct RunFnArgs<void(FollowedEntities, Args...)> {
+    using types = TypeList<Args...>;
+};
 
 template <Component T>
 class ReadComponent {
@@ -215,7 +223,9 @@ class EntityBuilder {
     Roster* m_world_roster;
 
 public:
-    EntityBuilder(Stash* stash, Roster* roster) : m_world_stash(stash), m_world_roster(roster) {}
+    EntityBuilder(Stash* stash, Roster* roster) : m_world_stash(stash), m_world_roster(roster)
+    {
+    }
 
     class EntitySkeleton {
         EntityID m_id;
@@ -246,5 +256,4 @@ public:
     EntitySkeleton new_entity(void) { return EntitySkeleton(m_world_stash, m_world_roster); }
 };
 
-}  // end namespace ark
-
+} // end namespace ark

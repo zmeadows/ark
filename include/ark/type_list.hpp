@@ -8,10 +8,6 @@ template<typename... Ts>
 struct TypeList {
     static constexpr size_t size{ sizeof... (Ts) };
     constexpr TypeList() = default; // necessary?
-
-    // template <typename T>
-    // static constexpr TypeList<T,Ts...> append(void) { return TypeList<T,Ts...>(); }
-
 };
 
 namespace detail {

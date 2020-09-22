@@ -32,19 +32,19 @@ class World {
     // Compile-time evaluated type indices for systems, components and resources
 
     template <System T>
-    constexpr size_t system_index(void)
+    inline constexpr size_t system_index(void)
     {
         return type_list::index<T, AllSystems>();
     }
 
     template <Component T>
-    constexpr size_t component_index(void)
+    inline constexpr size_t component_index(void)
     {
         return type_list::index<T, AllComponents>();
     }
 
     template <typename T>
-    constexpr size_t resource_index(void)
+    inline constexpr size_t resource_index(void)
     {
         return type_list::index<T, AllResources>();
     }
@@ -185,7 +185,7 @@ class World {
     inline void alert_system_entities_destroyed(const std::vector<EntityID>& destroyed_entities,
                                                 const ComponentMask& destroyed_mask)
     {
-        static const ComponentMask sys_mask = system_mask<T>();
+        constexpr ComponentMask sys_mask = system_mask<T>();
         if (sys_mask.is_subset_of(destroyed_mask)) {
             unfollow_entities<T>(destroyed_entities);
         }
@@ -241,7 +241,7 @@ class World {
             if (auto it = destroyed_roster.find(mask); it != destroyed_roster.end()) {
                 it->second.push_back(id);
             } else {
-                destroyed_roster.emplace(mask, {id});
+                destroyed_roster.emplace(mask, std::vector<EntityID>({id}));
             }
 
             // alert all relevant component storage to release dead entities components
@@ -433,39 +433,42 @@ class World {
     }
 
     template <typename... Ts>
-    inline void post_process_system_data(const detail::type_tag<std::tuple<Ts...>>&)
+    inline void post_process_system_data(const TypeList<Ts...>&)
     {
         (post_process_system_data_member<Ts>(), ...);
     }
 
-    template <System T>
+    template <System S>
     inline void post_process_system_data(void)
     {
-        constexpr auto tag = detail::type_tag<typename T::SystemData>();
-        post_process_system_data(tag);
+        post_process_system_data(RunFnArgs<decltype(S::run)>::types());
     }
 
     // ------------------------------------------------------------------------------------
 
-    template <System T>
-    void run_system(void)
+    template <System S, typename... RunArgs>
+    void run_system(const TypeList<RunArgs...>&)
     {
-        constexpr auto tag = detail::type_tag<typename T::SystemData>();
-        typename T::SystemData data = build_system_data(tag);
-        T::run(get_followed_entities<T>(), data);
+        S::run(get_followed_entities<S>(), fetch_system_run_arg<RunArgs>()...);
     }
 
-    template <System T>
+    template <System S>
+    void run_system(void)
+    {
+        run_system<S>(RunFnArgs<decltype(S::run)>::types());
+    }
+
+    template <System S>
     void run_system_and_postprocess(void)
     {
-        run_system<T>();
-        post_process_system_data<T>();
+        run_system<S>();
+        post_process_system_data<S>();
     }
 
     // ------------------------------------------------------------------------------------
 
     template <typename T>
-    inline auto build_system_data_member(void)
+    inline auto fetch_system_run_arg(void)
     {
         if constexpr (detail::is_specialization<T, ReadComponent>::value) {
             return T(m_component_stash.template get<typename T::ComponentType>());
@@ -494,17 +497,17 @@ class World {
             return T(m_resource_stash.template get<typename T::ResourceType>());
         }
         else {
-            static_assert(detail::unreachable<T>::value, "Invalid system data type requested!");
+            static_assert(detail::unreachable<T>::value, "Invalid system run argument type requested!");
         }
     }
 
     // For each system we construct a std::tuple containing each data type requested in the
     // SystemData typedef, in the proper order.
-    template <typename... Ts>
-    inline std::tuple<Ts...> build_system_data(const detail::type_tag<std::tuple<Ts...>>&)
-    {
-        return std::make_tuple<Ts...>(build_system_data_member<Ts>()...);
-    }
+    // template <typename... Ts>
+    // inline std::tuple<Ts...> build_system_data(const TypeList<Ts...>&)
+    // {
+    //     return std::make_tuple<Ts...>(build_system_data_member<Ts>()...);
+    // }
 
     // ------------------------------------------------------------------------------------
 
